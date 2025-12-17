@@ -22,3 +22,14 @@ app.get("/api/create-room", (req, res) => {
 app.listen(PORT, () => {
   console.log(`サーバー起動: ${PORT}`);
 });
+
+app.get("/api/join-room/:roomId", (req, res) => {
+  const { roomId } = req.params;
+
+  if (!rooms[roomId]) {
+    return res.status(404).json({ error: "Room not found" });
+  }
+
+  rooms[roomId].players += 1;
+  res.json({ success: true, roomId });
+});
