@@ -20,10 +20,11 @@ app.get("/api/create-room", (req, res) => {
     players: 1,
     roles: {
       host: "attack"
-    }
+    },
+    turn: "attack" // 最初は攻撃側
   };
 
-  res.json({ roomId, role: "attack" });
+  res.json({ roomId, role: "attack", turn: "attack" });
 });
 
 
@@ -45,7 +46,25 @@ app.get("/api/join-room/:roomId", (req, res) => {
   rooms[roomId].players += 1;
   rooms[roomId].roles.guest = "defense";
 
-  res.json({ roomId, role: "defense" });
+  res.json({
+    roomId,
+    role: "defense",
+    turn: rooms[roomId].turn
+  });
 });
+
+app.post("/api/end-turn/:roomId", (req, res) => {
+  const { roomId } = req.params;
+
+  if (!rooms[roomId]) {
+    return res.status(404).json({ error: "Room not found" });
+  }
+
+  rooms[roomId].turn =
+    rooms[roomId].turn === "attack" ? "defense" : "attack";
+
+  res.json({ turn: rooms[roomId].turn });
+});
+
 
 
