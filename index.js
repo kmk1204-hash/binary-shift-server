@@ -15,9 +15,17 @@ app.get("/", (req, res) => {
 
 app.get("/api/create-room", (req, res) => {
   const roomId = Math.random().toString(36).substring(2, 8);
-  rooms[roomId] = { players: 1 };
-  res.json({ roomId });
+
+  rooms[roomId] = {
+    players: 1,
+    roles: {
+      host: "attack"
+    }
+  };
+
+  res.json({ roomId, role: "attack" });
 });
+
 
 app.listen(PORT, () => {
   console.log(`サーバー起動: ${PORT}`);
@@ -30,6 +38,14 @@ app.get("/api/join-room/:roomId", (req, res) => {
     return res.status(404).json({ error: "Room not found" });
   }
 
+  if (rooms[roomId].players >= 2) {
+    return res.status(400).json({ error: "Room is full" });
+  }
+
   rooms[roomId].players += 1;
-  res.json({ success: true, roomId });
+  rooms[roomId].roles.guest = "defense";
+
+  res.json({ roomId, role: "defense" });
 });
+
+
