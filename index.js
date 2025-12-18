@@ -55,9 +55,15 @@ app.get("/api/join-room/:roomId", (req, res) => {
 
 app.post("/api/end-turn/:roomId", (req, res) => {
   const { roomId } = req.params;
+  const { role } = req.body; // Wixから送る
 
   if (!rooms[roomId]) {
     return res.status(404).json({ error: "Room not found" });
+  }
+
+  // 今のターンでない人は拒否
+  if (rooms[roomId].turn !== role) {
+    return res.status(403).json({ error: "Not your turn" });
   }
 
   rooms[roomId].turn =
@@ -65,6 +71,7 @@ app.post("/api/end-turn/:roomId", (req, res) => {
 
   res.json({ turn: rooms[roomId].turn });
 });
+
 
 
 
