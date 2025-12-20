@@ -6,22 +6,6 @@ app.use(cors());
 app.use(express.json());
 
 const rooms = {};
-rooms[roomId] = {
-  phase: "waiting",   // waiting | placement | battle | result
-  round: 1,           // 1 or 2
-  currentTurn: "attack",
-
-  players: {
-    attack: {
-      placedCards: [],   // 配置フェーズ用（伏せ）
-      score: 0
-    },
-    defense: {
-      placedCards: [],
-      score: 0
-    }
-  }
-};
 
 /* =====================
    ルーム作成
@@ -30,7 +14,7 @@ app.get("/api/create-room", (req, res) => {
   const roomId = Math.random().toString(36).substring(2, 8);
 
   rooms[roomId] = {
-    phase: "waiting",
+    phase: "waiting", // waiting | placement | battle | result
     round: 1,
     currentTurn: "attack",
     players: {
@@ -47,7 +31,6 @@ app.get("/api/create-room", (req, res) => {
 
   res.json({ roomId });
 });
-
 
 /* =====================
    ルーム参加
@@ -81,33 +64,42 @@ app.get("/api/room-state/:roomId", (req, res) => {
     defenseScore: room.players.defense.score
   });
 });
+
 /* =====================
-   フェーズ遷移
+   配置フェーズ：カード配置
 ===================== */
-if (
-  room.players.attack.placedCards.length === 3 &&
-  room.players.defense.placedCards.length === 3
-) {
-  room.phase = "battle";
-  room.currentTurn = "attack";
-}
-/* =====================
-   バトル終了
-===================== */
-if (room.round === 1) {
-  room.round = 2;
+app.post("/api/place-card/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
 
-  // 役割入れ替え
-  const tmp = room.players.attack;
-  room.players.attack = room.players.defense;
-  room.players.defense = tmp;
+  if (room.phase !== "placement") {
+    return res.status(400).json({ error: "Not placement phase" });
+  }
 
-  room.phase = "placement";
-  room.currentTurn = "attack";
+  const { card } = req.body;
+  const role = room.currentTurn;
 
-} else {
-  room.phase = "result";
-}
+  room.players[role].placedCards.push(card);
+
+  // ターン交代
+  room.currentTurn = role === "attack" ? "defense" : "attack";
+
+  // 両者3枚ずつでバトルへ
+  if (
+    room.players.attack.placedCards.length === 3 &&
+    room.players.defense.placedCards.length === 3
+  ) {
+    room.phase = "battle";
+    room.currentTurn = "attack";
+  }
+
+  res.json({
+    phase: room.phase,
+    currentTurn: room.currentTurn
+  });
+});
 
 /* =====================
    ターン終了
@@ -118,10 +110,18 @@ app.post("/api/end-turn/:roomId", (req, res) => {
     return res.status(404).json({ error: "Room not found" });
   }
 
-  room.turn = room.turn === "attack" ? "defense" : "attack";
+  room.currentTurn =
+    room.currentTurn === "attack" ? "defense" : "attack";
 
   res.json({
-    currentTurn: room.turn
+    currentTurn: room.currentTurn
   });
 });
 
+/* =====================
+   サーバー起動
+===================== */
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Binary Shift Server running on port ${PORT}`);
+});
