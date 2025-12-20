@@ -94,6 +94,8 @@ app.post("/api/phase1/place/:roomId", (req, res) => {
 /* =====================
    サーバー起動
 ===================== */
-app.listen(3000, () => {
-  console.log("Binary Shift Server running");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Binary Shift Server running on port ${PORT}`);
 });
