@@ -18,14 +18,8 @@ app.get("/api/create-room", (req, res) => {
     round: 1,
     currentTurn: "attack",
     players: {
-      attack: {
-        placedCards: [],
-        score: 0
-      },
-      defense: {
-        placedCards: [],
-        score: 0
-      }
+      attack: { placedCards: [], score: 0 },
+      defense: { placedCards: [], score: 0 }
     }
   };
 
@@ -60,33 +54,32 @@ app.get("/api/room-state/:roomId", (req, res) => {
     phase: room.phase,
     round: room.round,
     currentTurn: room.currentTurn,
-    attackScore: room.players.attack.score,
-    defenseScore: room.players.defense.score
+    attackPlaced: room.players.attack.placedCards.length,
+    defensePlaced: room.players.defense.placedCards.length
   });
 });
 
 /* =====================
    配置フェーズ：カード配置
 ===================== */
-app.post("/api/place-card/:roomId", (req, res) => {
+app.post("/api/phase1/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) {
     return res.status(404).json({ error: "Room not found" });
   }
 
-  if (room.phase !== "placement") {
-    return res.status(400).json({ error: "Not placement phase" });
-  }
+  const { role, card } = req.body;
 
-  const { card } = req.body;
-  const role = room.currentTurn;
+  if (room.currentTurn !== role) {
+    return res.status(400).json({ error: "Not your turn" });
+  }
 
   room.players[role].placedCards.push(card);
 
   // ターン交代
   room.currentTurn = role === "attack" ? "defense" : "attack";
 
-  // 両者3枚ずつでバトルへ
+  // 両者3枚でバトルへ
   if (
     room.players.attack.placedCards.length === 3 &&
     room.players.defense.placedCards.length === 3
@@ -95,33 +88,12 @@ app.post("/api/place-card/:roomId", (req, res) => {
     room.currentTurn = "attack";
   }
 
-  res.json({
-    phase: room.phase,
-    currentTurn: room.currentTurn
-  });
-});
-
-/* =====================
-   ターン終了
-===================== */
-app.post("/api/end-turn/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  if (!room) {
-    return res.status(404).json({ error: "Room not found" });
-  }
-
-  room.currentTurn =
-    room.currentTurn === "attack" ? "defense" : "attack";
-
-  res.json({
-    currentTurn: room.currentTurn
-  });
+  res.json({ success: true });
 });
 
 /* =====================
    サーバー起動
 ===================== */
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Binary Shift Server running on port ${PORT}`);
+app.listen(3000, () => {
+  console.log("Binary Shift Server running");
 });
