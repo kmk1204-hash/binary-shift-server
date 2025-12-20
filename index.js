@@ -6,6 +6,22 @@ app.use(cors());
 app.use(express.json());
 
 const rooms = {};
+rooms[roomId] = {
+  phase: "waiting",   // waiting | placement | battle | result
+  round: 1,           // 1 or 2
+  currentTurn: "attack",
+
+  players: {
+    attack: {
+      placedCards: [],   // 配置フェーズ用（伏せ）
+      score: 0
+    },
+    defense: {
+      placedCards: [],
+      score: 0
+    }
+  }
+};
 
 /* =====================
    ルーム作成
@@ -14,23 +30,22 @@ app.get("/api/create-room", (req, res) => {
   const roomId = Math.random().toString(36).substring(2, 8);
 
   rooms[roomId] = {
-    players: 1,
-    turn: "attack",
-    phase: 1,
-    board: [null, null, null, null, null, null],
-    attack: {
-      hand: ["0", "0", "0", "1", "1", "1"]
-    },
-    defense: {
-      hand: ["0", "0", "0", "1", "1", "1"]
+    phase: "waiting",
+    round: 1,
+    currentTurn: "attack",
+    players: {
+      attack: {
+        placedCards: [],
+        score: 0
+      },
+      defense: {
+        placedCards: [],
+        score: 0
+      }
     }
   };
 
-  res.json({
-    roomId,
-    role: "attack",
-    turn: "attack"
-  });
+  res.json({ roomId });
 });
 
 
@@ -39,17 +54,14 @@ app.get("/api/create-room", (req, res) => {
 ===================== */
 app.get("/api/join-room/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-
-  if (!room || room.players >= 2) {
-    return res.status(400).json({ error: "Room not available" });
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
   }
 
-  room.players = 2;
+  room.phase = "placement";
+  room.currentTurn = "attack";
 
-  res.json({
-    role: "defense",
-    turn: room.turn
-  });
+  res.json({ role: "defense" });
 });
 
 /* =====================
@@ -62,9 +74,40 @@ app.get("/api/room-state/:roomId", (req, res) => {
   }
 
   res.json({
-    currentTurn: room.turn
+    phase: room.phase,
+    round: room.round,
+    currentTurn: room.currentTurn,
+    attackScore: room.players.attack.score,
+    defenseScore: room.players.defense.score
   });
 });
+/* =====================
+   フェーズ遷移
+===================== */
+if (
+  room.players.attack.placedCards.length === 3 &&
+  room.players.defense.placedCards.length === 3
+) {
+  room.phase = "battle";
+  room.currentTurn = "attack";
+}
+/* =====================
+   バトル終了
+===================== */
+if (room.round === 1) {
+  room.round = 2;
+
+  // 役割入れ替え
+  const tmp = room.players.attack;
+  room.players.attack = room.players.defense;
+  room.players.defense = tmp;
+
+  room.phase = "placement";
+  room.currentTurn = "attack";
+
+} else {
+  room.phase = "result";
+}
 
 /* =====================
    ターン終了
@@ -139,3 +182,4 @@ function getPublicBoard(room, role) {
     return cell.owner === role ? "伏せ" : "？";
   });
 }
+
