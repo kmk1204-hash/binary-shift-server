@@ -1,4 +1,4 @@
-import express from "express";
+ import express from "express";
 import cors from "cors";
 
 const app = express();
@@ -6,7 +6,6 @@ app.use(cors());
 app.use(express.json());
 
 const rooms = {};
-
 
 /* =====================
    ルーム作成
@@ -24,6 +23,8 @@ app.get("/api/create-room", (req, res) => {
       firstPlayer: null, // "attack" | "defense"
       firstFace: null    // "face" | "back"
     },
+
+    rewrite: null,
 
     currentActor: null,
 
@@ -71,6 +72,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     round: room.round,
     currentActor: room.currentActor,
     attack: room.attack,
+    rewrite: room.rewrite,
     pointArea: room.pointArea,
     attackHand: room.players.attack.hand.length,
     defenseHand: room.players.defense.hand.length
@@ -96,7 +98,6 @@ app.post("/api/placement/place/:roomId", (req, res) => {
   room.players[role].placedCards.push(card);
   room.currentActor = role === "attack" ? "defense" : "attack";
 
-  // 両者3枚で攻撃フェーズへ
   if (
     room.players.attack.placedCards.length === 3 &&
     room.players.defense.placedCards.length === 3
@@ -116,7 +117,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 });
 
 /* =====================
-   攻撃フェーズ：カード配置
+   攻撃フェーズ
 ===================== */
 app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
@@ -129,7 +130,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not attack phase" });
   }
 
-  // 誰のターンか
   const expectedActor =
     attack.subTurn === 1
       ? attack.firstPlayer
@@ -141,7 +141,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not your turn" });
   }
 
-  // 表／伏せルール
   if (attack.subTurn === 1) {
     attack.firstFace = face;
   } else {
@@ -150,20 +149,16 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     }
   }
 
-  // 位置チェック
   if (room.pointArea[position] !== null) {
     return res.status(400).json({ error: "Position already filled" });
   }
 
-  // 配置
   room.pointArea[position] = { card, face, role };
 
-  // 手札から削除
   const hand = room.players[role].hand;
   const idx = hand.indexOf(card);
   if (idx !== -1) hand.splice(idx, 1);
 
-  // 手順進行
   if (attack.subTurn === 1) {
     attack.subTurn = 2;
   } else {
@@ -175,24 +170,22 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     if (attack.step === 3) attack.firstPlayer = "attack";
   }
 
-  // 攻撃フェーズ終了
- if (attack.step > 3) {
-  room.phase = "rewrite";
-  room.rewrite = {
-    attackUsed: false,
-    defenseUsed: false,
-    lockedIndexes: []
-  };
-  room.currentActor = "attack"; // 攻撃側から読み替え
-}
+  if (attack.step > 3) {
+    room.phase = "rewrite";
+    room.rewrite = {
+      attackUsed: false,
+      defenseUsed: false,
+      lockedIndexes: []
+    };
+    room.currentActor = "attack";
+  }
 
+  res.json({ success: true });
+});
 
-rewrite: {
-  attackUsed: false,
-  defenseUsed: false,
-  lockedIndexes: [] // 既に読み替えられた開始位置
-}
-
+/* =====================
+   読み替えフェーズ
+===================== */
 function getBinaryArray(room) {
   return room.pointArea.map(p => p.card);
 }
@@ -205,13 +198,10 @@ app.post("/api/rewrite/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not rewrite phase" });
   }
 
-  const { role, startIndex } = req.body; 
-  // startIndex = 0〜3（3連続の開始位置）
-
-  const binary = getBinaryArray(room);
+  const { role, startIndex } = req.body;
   const rewrite = room.rewrite;
+  const binary = getBinaryArray(room);
 
-  // 使用済みチェック
   if (role === "attack" && rewrite.attackUsed) {
     return res.status(400).json({ error: "Attack already used rewrite" });
   }
@@ -219,14 +209,12 @@ app.post("/api/rewrite/:roomId", (req, res) => {
     return res.status(400).json({ error: "Defense already used rewrite" });
   }
 
-  // ロックチェック
   if (rewrite.lockedIndexes.includes(startIndex)) {
     return res.status(400).json({ error: "Already rewritten area" });
   }
 
   const target = binary.slice(startIndex, startIndex + 3).join("");
 
-  // ルール判定
   if (role === "attack" && target !== "000") {
     return res.status(400).json({ error: "Attack can rewrite only 000" });
   }
@@ -234,24 +222,20 @@ app.post("/api/rewrite/:roomId", (req, res) => {
     return res.status(400).json({ error: "Defense can rewrite only 111" });
   }
 
-  // 書き換え
   const newValue = role === "attack" ? "1" : "0";
   for (let i = startIndex; i < startIndex + 3; i++) {
     room.pointArea[i].card = newValue;
   }
 
   rewrite.lockedIndexes.push(startIndex);
-
   if (role === "attack") rewrite.attackUsed = true;
   if (role === "defense") rewrite.defenseUsed = true;
 
-  // ターン交代 or 終了
   room.currentActor =
     role === "attack" ? "defense" : null;
 
-  // 両者終了で次へ
   if (rewrite.attackUsed && rewrite.defenseUsed) {
-    room.phase = "result"; // ここでは一旦 result
+    room.phase = "result";
     room.currentActor = null;
   }
 
@@ -268,4 +252,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
-
