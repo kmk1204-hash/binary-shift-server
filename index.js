@@ -91,6 +91,25 @@ app.post("/api/phase1/place/:roomId", (req, res) => {
   res.json({ success: true });
 });
 
+app.post("/api/battle/attack/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) return res.status(404).json({ error: "Room not found" });
+
+  if (room.currentTurn !== "attack") {
+    return res.status(400).json({ error: "Not attack turn" });
+  }
+
+  const { index } = req.body; // 0〜2
+
+  room.players.attack.attackCard =
+    room.players.attack.placedCards[index];
+
+  room.currentTurn = "defense";
+
+  res.json({ success: true });
+});
+
+
 /* =====================
    サーバー起動
 ===================== */
@@ -99,3 +118,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
+
