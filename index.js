@@ -17,10 +17,14 @@ app.get("/api/create-room", (req, res) => {
     phase: "waiting", // waiting | placement | attack | rewrite | result
     round: 1,
 
-    attackStep: null, // 1 | 2 | 3
-    subTurn: null,    // 1 | 2
-    currentActor: null, // attack | defense
-    faceRule: null,     // face | back
+    attack: {
+      step: null,        // 1 | 2 | 3
+      subTurn: null,     // 1=先手 / 2=後手
+      firstPlayer: null, // "attack" | "defense"
+      firstFace: null    // "face" | "back"
+    },
+
+    currentActor: null,
 
     pointArea: [null, null, null, null, null, null],
 
@@ -46,9 +50,7 @@ app.get("/api/create-room", (req, res) => {
 ===================== */
 app.get("/api/join-room/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) {
-    return res.status(404).json({ error: "Room not found" });
-  }
+  if (!room) return res.status(404).json({ error: "Room not found" });
 
   room.phase = "placement";
   room.currentActor = "attack";
@@ -61,16 +63,13 @@ app.get("/api/join-room/:roomId", (req, res) => {
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) {
-    return res.status(404).json({ error: "Room not found" });
-  }
+  if (!room) return res.status(404).json({ error: "Room not found" });
 
   res.json({
     phase: room.phase,
     round: room.round,
-    attackStep: room.attackStep,
-    subTurn: room.subTurn,
     currentActor: room.currentActor,
+    attack: room.attack,
     pointArea: room.pointArea,
     attackHand: room.players.attack.hand.length,
     defenseHand: room.players.defense.hand.length
@@ -89,22 +88,23 @@ app.post("/api/placement/place/:roomId", (req, res) => {
   if (room.phase !== "placement") {
     return res.status(400).json({ error: "Not placement phase" });
   }
-
   if (room.currentActor !== role) {
     return res.status(400).json({ error: "Not your turn" });
   }
 
   room.players[role].placedCards.push(card);
-
   room.currentActor = role === "attack" ? "defense" : "attack";
 
+  // 両者3枚で攻撃フェーズへ
   if (
     room.players.attack.placedCards.length === 3 &&
     room.players.defense.placedCards.length === 3
   ) {
     room.phase = "attack";
-    room.attackStep = 1;
-    room.subTurn = 1;
+    room.attack.step = 1;
+    room.attack.subTurn = 1;
+    room.attack.firstPlayer = "attack";
+    room.attack.firstFace = null;
     room.currentActor = "attack";
 
     room.players.attack.hand = [...room.players.attack.placedCards];
@@ -121,70 +121,73 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ error: "Room not found" });
 
-  const { actor, source, cardIndex, position, face } = req.body;
+  const { role, card, face, position } = req.body;
+  const attack = room.attack;
 
   if (room.phase !== "attack") {
     return res.status(400).json({ error: "Not attack phase" });
   }
 
-  if (room.currentActor !== actor) {
+  // 誰のターンか
+  const expectedActor =
+    attack.subTurn === 1
+      ? attack.firstPlayer
+      : attack.firstPlayer === "attack"
+        ? "defense"
+        : "attack";
+
+  if (role !== expectedActor) {
     return res.status(400).json({ error: "Not your turn" });
   }
 
-  let card;
-  if (source === "own") {
-    card = room.players[actor].hand.splice(cardIndex, 1)[0];
-  } else if (source === "opponent") {
-    const opponent = actor === "attack" ? "defense" : "attack";
-    card = room.players[opponent].hand.splice(cardIndex, 1)[0];
-  } else if (source === "field") {
-    card = room.pointArea.find(c => c && c.face === "back");
+  // 表／伏せルール
+  if (attack.subTurn === 1) {
+    attack.firstFace = face;
   } else {
-    return res.status(400).json({ error: "Invalid source" });
-  }
-
-  const finalFace =
-    room.faceRule === null ? face :
-    room.faceRule === "face" ? "back" : "face";
-
-  room.pointArea[position - 1] = {
-    value: card,
-    face: finalFace
-  };
-
-  /* ===== フェーズ進行 ===== */
-  if (room.subTurn === 1) {
-    room.faceRule = finalFace;
-    room.subTurn = 2;
-    room.currentActor = actor === "attack" ? "defense" : "attack";
-  } else {
-    room.faceRule = null;
-    room.subTurn = 1;
-
-    if (room.attackStep < 3) {
-      room.attackStep += 1;
-      room.currentActor =
-        room.attackStep === 2 ? "defense" : "attack";
-    } else {
-      room.phase = "rewrite";
-      room.currentActor = null;
+    if (face === attack.firstFace) {
+      return res.status(400).json({ error: "Face rule violation" });
     }
   }
 
-  res.json({ success: true });
-});
+  // 位置チェック
+  if (room.pointArea[position] !== null) {
+    return res.status(400).json({ error: "Position already filled" });
+  }
 
-/* =====================
-   ターン終了（保険用）
-===================== */
-app.post("/api/end-turn/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+  // 配置
+  room.pointArea[position] = { card, face, role };
 
-  room.currentActor =
-    room.currentActor === "attack" ? "defense" : "attack";
+  // 手札から削除
+  const hand = room.players[role].hand;
+  const idx = hand.indexOf(card);
+  if (idx !== -1) hand.splice(idx, 1);
 
-  res.json({ currentActor: room.currentActor });
+  // 手順進行
+  if (attack.subTurn === 1) {
+    attack.subTurn = 2;
+  } else {
+    attack.subTurn = 1;
+    attack.firstFace = null;
+    attack.step++;
+
+    if (attack.step === 2) attack.firstPlayer = "defense";
+    if (attack.step === 3) attack.firstPlayer = "attack";
+  }
+
+  // 攻撃フェーズ終了
+  if (attack.step > 3) {
+    room.phase = "rewrite";
+    room.currentActor = null;
+  } else {
+    room.currentActor =
+      attack.subTurn === 1
+        ? attack.firstPlayer
+        : attack.firstPlayer === "attack"
+          ? "defense"
+          : "attack";
+  }
+
+  res.json({ success: true, room });
 });
 
 /* =====================
