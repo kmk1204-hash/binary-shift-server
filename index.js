@@ -15,12 +15,7 @@ app.get("/api/create-room", (req, res) => {
 
   rooms[roomId] = {
     phase: "placement",
-    round: 1,
-
-    // ★ 必ず attack から開始
     currentActor: "attack",
-
-    pointArea: [null, null, null, null, null, null],
 
     players: {
       attack: { placedCards: [], hand: [], score: 0 },
@@ -42,7 +37,7 @@ app.get("/api/join-room/:roomId", (req, res) => {
     return res.status(404).json({ error: "Room not found" });
   }
 
-  // ★ ここでは何も変更しない（超重要）
+  // 状態は変えない
   res.json({ role: "defense" });
 });
 
@@ -58,10 +53,9 @@ app.get("/api/room-state/:roomId", (req, res) => {
   res.json({
     phase: room.phase,
     currentActor: room.currentActor,
-    battleState: room.battleState || null
+    battleState: room.battleState
   });
 });
-
 
 /* =====================
    配置フェーズ
@@ -78,18 +72,16 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not placement phase" });
   }
 
-  // ★ 手番チェック
   if (room.currentActor !== role) {
     return res.status(400).json({ error: "Not your turn" });
   }
 
-  // ★ 配置
   room.players[role].placedCards.push(card);
 
-  // ★ 手番切り替え（最重要）
+  // 手番交代
   room.currentActor = role === "attack" ? "defense" : "attack";
 
-  // ★ 両者3枚ずつ置いたら攻撃フェーズへ
+  // 両者3枚ずつで battle 開始
   if (
     room.players.attack.placedCards.length === 3 &&
     room.players.defense.placedCards.length === 3
@@ -102,10 +94,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 
     room.battleState = {
       step: 1,
-      turn: 1,                 // 1=先手 2=後手
-      currentRole: "attack",
-
-      pickFrom: "self",
+      turn: "attack",          // ← 文字列で統一
       forcedFace: null,
 
       attackHand: [...room.players.attack.hand],
@@ -115,19 +104,17 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     };
   }
 
-  res.json({
-    success: true,
-    phase: room.phase,
-    currentActor: room.currentActor
-  });
+  res.json({ success: true });
 });
 
 /* =====================
-   攻撃フェーズ（手順①）
+   攻撃フェーズ：手順①
 ===================== */
 app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
 
   if (room.phase !== "attack") {
     return res.status(400).json({ error: "Not attack phase" });
@@ -136,9 +123,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   const bs = room.battleState;
   const { role, cardIndex, face, position } = req.body;
 
-  /* =====================
-     攻撃側（先手）
-  ===================== */
+  /* ---------- 攻撃側（先手） ---------- */
   if (bs.step === 1 && bs.turn === "attack") {
     if (role !== "attack") {
       return res.status(400).json({ error: "Not your turn" });
@@ -153,7 +138,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.status(400).json({ error: "Invalid card" });
     }
 
-    // 表伏せ自由 → 防御側に強制
     bs.forcedFace = face === "表" ? "伏せ" : "表";
 
     bs.pointArea[0] = {
@@ -164,15 +148,12 @@ app.post("/api/attack/place/:roomId", (req, res) => {
 
     bs.attackHand.splice(cardIndex, 1);
 
-    // 防御側へ
     bs.turn = "defense";
 
     return res.json({ success: true, battleState: bs });
   }
 
-  /* =====================
-     防御側（後手）
-  ===================== */
+  /* ---------- 防御側（後手） ---------- */
   if (bs.step === 1 && bs.turn === "defense") {
     if (role !== "defense") {
       return res.status(400).json({ error: "Not your turn" });
@@ -183,10 +164,9 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     }
 
     if (bs.pointArea[position]) {
-      return res.status(400).json({ error: "Position already filled" });
+      return res.status(400).json({ error: "Position filled" });
     }
 
-    // ★ 攻撃側の残りカードから選ぶ
     const card = bs.attackHand[cardIndex];
     if (!card) {
       return res.status(400).json({ error: "Invalid card" });
@@ -200,7 +180,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
 
     bs.attackHand.splice(cardIndex, 1);
 
-    // 手順①完了 → 手順②へ
+    // 手順①完了
     bs.step = 2;
     bs.turn = "defense";
     bs.forcedFace = null;
@@ -211,18 +191,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   res.status(400).json({ error: "Invalid state" });
 });
 
-  /* =====================
-     次フェーズ判定（今は未実装でもOK）
-  ===================== */
-  // step2 / step3 はここから拡張する
-
-  res.json({
-    success: true,
-    battleState: bs
-  });
-});
-
-
 /* =====================
    サーバー起動
 ===================== */
@@ -230,6 +198,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
-
-
-
