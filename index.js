@@ -14,18 +14,23 @@ app.get("/api/create-room", (req, res) => {
   const roomId = Math.random().toString(36).substring(2, 8);
 
   rooms[roomId] = {
-    phase: "waiting",
+    phase: "placement",        // ★ waiting にしない
+    round: 1,
+    currentActor: "attack",    // ★ 最初から攻撃側
+
+    attack: { step: null },
+
+    pointArea: [null, null, null, null, null, null],
 
     players: {
-      attack: { placedCards: [], hand: [] },
-      defense: { placedCards: [], hand: [] }
-    },
-
-    battleState: null
+      attack: { placedCards: [], hand: [], score: 0 },
+      defense: { placedCards: [], hand: [], score: 0 }
+    }
   };
 
   res.json({ roomId });
 });
+
 
 /* =====================
    ルーム参加
@@ -173,3 +178,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
+
