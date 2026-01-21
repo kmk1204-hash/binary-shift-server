@@ -110,11 +110,12 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 /* =====================
    攻撃フェーズ：手順①
 ===================== */
+/* =====================
+   攻撃フェーズ（手順①）
+===================== */
 app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) {
-    return res.status(404).json({ error: "Room not found" });
-  }
+  if (!room) return res.status(404).json({ error: "Room not found" });
 
   if (room.phase !== "attack") {
     return res.status(400).json({ error: "Not attack phase" });
@@ -123,8 +124,9 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   const bs = room.battleState;
   const { role, cardIndex, face, position } = req.body;
 
-  /* ---------- 攻撃側（先手） ---------- */
-  if (bs.step === 1 && bs.turn === "attack") {
+  /* ===== 手順①：攻撃側 ===== */
+  if (bs.step === 1 && bs.currentRole === "attack") {
+
     if (role !== "attack") {
       return res.status(400).json({ error: "Not your turn" });
     }
@@ -138,8 +140,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.status(400).json({ error: "Invalid card" });
     }
 
-    bs.forcedFace = face === "表" ? "伏せ" : "表";
-
     bs.pointArea[0] = {
       card,
       face,
@@ -148,44 +148,16 @@ app.post("/api/attack/place/:roomId", (req, res) => {
 
     bs.attackHand.splice(cardIndex, 1);
 
-    bs.turn = "defense";
+    // ★ 表伏せルール
+    bs.forcedFace = face === "表" ? "伏せ" : "表";
 
-    return res.json({ success: true, battleState: bs });
-  }
+    // ★ 防御側へ手番移動（ここが重要）
+    bs.currentRole = "defense";
 
-  /* ---------- 防御側（後手） ---------- */
-  if (bs.step === 1 && bs.turn === "defense") {
-    if (role !== "defense") {
-      return res.status(400).json({ error: "Not your turn" });
-    }
-
-    if (face !== bs.forcedFace) {
-      return res.status(400).json({ error: "Face rule violation" });
-    }
-
-    if (bs.pointArea[position]) {
-      return res.status(400).json({ error: "Position filled" });
-    }
-
-    const card = bs.attackHand[cardIndex];
-    if (!card) {
-      return res.status(400).json({ error: "Invalid card" });
-    }
-
-    bs.pointArea[position] = {
-      card,
-      face,
-      owner: "attack"
-    };
-
-    bs.attackHand.splice(cardIndex, 1);
-
-    // 手順①完了
-    bs.step = 2;
-    bs.turn = "defense";
-    bs.forcedFace = null;
-
-    return res.json({ success: true, battleState: bs });
+    return res.json({
+      success: true,
+      battleState: bs
+    });
   }
 
   res.status(400).json({ error: "Invalid state" });
@@ -198,3 +170,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
+
