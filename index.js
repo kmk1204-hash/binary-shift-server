@@ -50,13 +50,14 @@ app.get("/api/join-room/:roomId", (req, res) => {
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (!room) return res.status(404).json({ error: "not found" });
 
   res.json({
     phase: room.phase,
-    battleState: room.battleState
+    currentActor: room.currentActor
   });
 });
+
 
 /* =====================
    配置フェーズ
@@ -178,4 +179,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
+
 
