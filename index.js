@@ -14,34 +14,35 @@ app.get("/api/create-room", (req, res) => {
   const roomId = Math.random().toString(36).substring(2, 8);
 
   rooms[roomId] = {
-    phase: "placement",        // ★ waiting にしない
+    phase: "placement",
     round: 1,
-    currentActor: "attack",    // ★ 最初から攻撃側
 
-    attack: { step: null },
+    // ★ 必ず attack から開始
+    currentActor: "attack",
 
     pointArea: [null, null, null, null, null, null],
 
     players: {
       attack: { placedCards: [], hand: [], score: 0 },
       defense: { placedCards: [], hand: [], score: 0 }
-    }
+    },
+
+    battleState: null
   };
 
   res.json({ roomId });
 });
-
 
 /* =====================
    ルーム参加
 ===================== */
 app.get("/api/join-room/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
 
-  room.phase = "placement";
-  room.currentActor = "attack";
-
+  // ★ ここでは何も変更しない（超重要）
   res.json({ role: "defense" });
 });
 
@@ -50,7 +51,9 @@ app.get("/api/join-room/:roomId", (req, res) => {
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "not found" });
+  if (!room) {
+    return res.status(404).json({ error: "not found" });
+  }
 
   res.json({
     phase: room.phase,
@@ -58,13 +61,14 @@ app.get("/api/room-state/:roomId", (req, res) => {
   });
 });
 
-
 /* =====================
    配置フェーズ
 ===================== */
 app.post("/api/placement/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
 
   const { role, card } = req.body;
 
@@ -72,20 +76,31 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not placement phase" });
   }
 
+  // ★ 手番チェック
+  if (room.currentActor !== role) {
+    return res.status(400).json({ error: "Not your turn" });
+  }
+
+  // ★ 配置
   room.players[role].placedCards.push(card);
 
+  // ★ 手番切り替え（最重要）
+  room.currentActor = role === "attack" ? "defense" : "attack";
+
+  // ★ 両者3枚ずつ置いたら攻撃フェーズへ
   if (
     room.players.attack.placedCards.length === 3 &&
     room.players.defense.placedCards.length === 3
   ) {
     room.phase = "attack";
+    room.currentActor = "attack";
 
     room.players.attack.hand = [...room.players.attack.placedCards];
     room.players.defense.hand = [...room.players.defense.placedCards];
 
     room.battleState = {
       step: 1,
-      turn: 1, // 1=先手 2=後手
+      turn: 1,                 // 1=先手 2=後手
       currentRole: "attack",
 
       pickFrom: "self",
@@ -98,15 +113,21 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     };
   }
 
-  res.json({ success: true });
+  res.json({
+    success: true,
+    phase: room.phase,
+    currentActor: room.currentActor
+  });
 });
 
 /* =====================
-   攻撃フェーズ（手順①〜）
+   攻撃フェーズ（手順①）
 ===================== */
 app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
 
   const bs = room.battleState;
   const { role, cardIndex, face, position } = req.body;
@@ -119,7 +140,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not your turn" });
   }
 
-  /* ===== 参照する手札 ===== */
+  /* ===== 参照手札 ===== */
   const sourceHand =
     bs.pickFrom === "self"
       ? (role === "attack" ? bs.attackHand : bs.defenseHand)
@@ -133,13 +154,11 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   /* ===== 表伏せルール ===== */
   if (bs.turn === 1) {
     bs.forcedFace = face === "表" ? "伏せ" : "表";
-  } else {
-    if (face !== bs.forcedFace) {
-      return res.status(400).json({ error: "Face rule violation" });
-    }
+  } else if (face !== bs.forcedFace) {
+    return res.status(400).json({ error: "Face rule violation" });
   }
 
-  /* ===== 位置制限（手順① 先手） ===== */
+  /* ===== 位置制限 ===== */
   if (bs.step === 1 && bs.turn === 1 && position !== 0) {
     return res.status(400).json({ error: "Must place at position 1" });
   }
@@ -152,21 +171,17 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   bs.pointArea[position] = { card, face, role };
   sourceHand.splice(cardIndex, 1);
 
-  /* ===== 手順①の進行 ===== */
-  if (bs.step === 1) {
-    if (bs.turn === 1) {
-      // 後手へ
-      bs.turn = 2;
-      bs.currentRole = "defense";
-      bs.pickFrom = "opponent";
-    } else {
-      // 手順① 完了 → 手順②
-      bs.step = 2;
-      bs.turn = 1;
-      bs.currentRole = "defense";
-      bs.pickFrom = "self";
-      bs.forcedFace = null;
-    }
+  /* ===== 手順①進行 ===== */
+  if (bs.turn === 1) {
+    bs.turn = 2;
+    bs.currentRole = "defense";
+    bs.pickFrom = "opponent";
+  } else {
+    bs.step = 2;
+    bs.turn = 1;
+    bs.currentRole = "defense";
+    bs.pickFrom = "self";
+    bs.forcedFace = null;
   }
 
   res.json({ success: true, battleState: bs });
@@ -179,5 +194,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
-
-
