@@ -136,56 +136,96 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not attack phase" });
   }
 
+  if (!bs) {
+    return res.status(400).json({ error: "Battle state not initialized" });
+  }
+
   if (role !== bs.currentRole) {
     return res.status(400).json({ error: "Not your turn" });
   }
 
-  /* ===== 参照手札 ===== */
+  /* =====================
+     使用する手札を決定
+  ===================== */
   const sourceHand =
     bs.pickFrom === "self"
-      ? (role === "attack" ? bs.attackHand : bs.defenseHand)
-      : (role === "attack" ? bs.defenseHand : bs.attackHand);
+      ? role === "attack"
+        ? bs.attackHand
+        : bs.defenseHand
+      : role === "attack"
+      ? bs.defenseHand
+      : bs.attackHand;
 
   const card = sourceHand[cardIndex];
-  if (!card) {
-    return res.status(400).json({ error: "Invalid card" });
+  if (card === undefined) {
+    return res.status(400).json({ error: "Invalid card index" });
   }
 
-  /* ===== 表伏せルール ===== */
+  /* =====================
+     表伏せルール
+  ===================== */
   if (bs.turn === 1) {
+    // 先手：自由
     bs.forcedFace = face === "表" ? "伏せ" : "表";
-  } else if (face !== bs.forcedFace) {
-    return res.status(400).json({ error: "Face rule violation" });
+  } else {
+    // 後手：逆でなければならない
+    if (face !== bs.forcedFace) {
+      return res.status(400).json({ error: "Face rule violation" });
+    }
   }
 
-  /* ===== 位置制限 ===== */
+  /* =====================
+     位置制限（手順① 先手）
+  ===================== */
   if (bs.step === 1 && bs.turn === 1 && position !== 0) {
     return res.status(400).json({ error: "Must place at position 1" });
   }
 
-  if (bs.pointArea[position]) {
-    return res.status(400).json({ error: "Position filled" });
+  if (bs.pointArea[position] !== null) {
+    return res.status(400).json({ error: "Position already filled" });
   }
 
-  /* ===== 配置 ===== */
-  bs.pointArea[position] = { card, face, role };
+  /* =====================
+     配置処理
+  ===================== */
+  bs.pointArea[position] = {
+    card,
+    face,
+    role
+  };
+
   sourceHand.splice(cardIndex, 1);
 
-  /* ===== 手順①進行 ===== */
-  if (bs.turn === 1) {
-    bs.turn = 2;
-    bs.currentRole = "defense";
-    bs.pickFrom = "opponent";
-  } else {
-    bs.step = 2;
-    bs.turn = 1;
-    bs.currentRole = "defense";
-    bs.pickFrom = "self";
-    bs.forcedFace = null;
+  /* =====================
+     手順進行ロジック
+  ===================== */
+  if (bs.step === 1) {
+    if (bs.turn === 1) {
+      // 手順①：先手 → 後手
+      bs.turn = 2;
+      bs.currentRole = role === "attack" ? "defense" : "attack";
+      bs.pickFrom = "opponent";
+    } else {
+      // 手順① 完了 → 手順②へ
+      bs.step = 2;
+      bs.turn = 1;
+      bs.currentRole = "defense";
+      bs.pickFrom = "self";
+      bs.forcedFace = null;
+    }
   }
 
-  res.json({ success: true, battleState: bs });
+  /* =====================
+     次フェーズ判定（今は未実装でもOK）
+  ===================== */
+  // step2 / step3 はここから拡張する
+
+  res.json({
+    success: true,
+    battleState: bs
+  });
 });
+
 
 /* =====================
    サーバー起動
@@ -194,3 +234,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
+
