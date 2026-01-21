@@ -52,7 +52,6 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
   res.json({
     phase: room.phase,
-    currentActor: room.currentActor,
     battleState: room.battleState
   });
 });
@@ -170,4 +169,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Binary Shift Server running on port ${PORT}`);
 });
+
 
