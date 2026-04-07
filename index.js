@@ -59,19 +59,46 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 
   const { role, card } = req.body;
 
+  /* ========= バリデーション ========= */
   if (room.phase !== "placement") {
     return res.status(400).json({ error: "Not placement phase" });
   }
 
-  room.players[role].placedCards.push(card);
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({ error: "Invalid role" });
+  }
 
-  // 両者3枚で Battle 開始
-  if (
-    room.players.attack.placedCards.length === 3 &&
-    room.players.defense.placedCards.length === 3
-  ) {
+  if (!card || (card !== 0 && card !== 1)) {
+    return res.status(400).json({ error: "Invalid card" });
+  }
+
+  const player = room.players[role];
+
+  // 3枚以上置けない
+  if (player.placedCards.length >= 3) {
+    return res.status(400).json({ error: "Already placed 3 cards" });
+  }
+
+  /* ========= 配置 ========= */
+  player.placedCards.push(card);
+
+  /* ========= デバッグログ ========= */
+  const attackCount = room.players.attack.placedCards.length;
+  const defenseCount = room.players.defense.placedCards.length;
+
+  console.log("Placement:",
+    "attack =", attackCount,
+    "defense =", defenseCount
+  );
+
+  /* ========= 両者3枚で Battle開始 ========= */
+  if (attackCount === 3 && defenseCount === 3) {
+
+    console.log(">>> BATTLE START");
+
     room.phase = "attack";
 
+    // hand 初期化（コピー重要）
     room.players.attack.hand = [...room.players.attack.placedCards];
     room.players.defense.hand = [...room.players.defense.placedCards];
 
@@ -87,9 +114,13 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     };
   }
 
-  res.json({ success: true });
+  res.json({
+    success: true,
+    attackCount,
+    defenseCount,
+    phase: room.phase
+  });
 });
-
 /* =====================
    Battle：配置処理（step1〜6）
 ===================== */
