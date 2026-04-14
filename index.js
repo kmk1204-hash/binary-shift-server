@@ -68,7 +68,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Invalid role" });
   }
 
-  if (!card || (card !== 0 && card !== 1)) {
+ if (card !== 0 && card !== 1) {
     return res.status(400).json({ error: "Invalid card" });
   }
 
