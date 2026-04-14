@@ -59,7 +59,6 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 
   const { role, card } = req.body;
 
-  /* ========= バリデーション ========= */
   if (room.phase !== "placement") {
     return res.status(400).json({ error: "Not placement phase" });
   }
@@ -68,37 +67,24 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Invalid role" });
   }
 
- if (card !== 0 && card !== 1) {
+  if (card !== 0 && card !== 1) {
     return res.status(400).json({ error: "Invalid card" });
   }
 
   const player = room.players[role];
 
-  // 3枚以上置けない
   if (player.placedCards.length >= 3) {
     return res.status(400).json({ error: "Already placed 3 cards" });
   }
 
-  /* ========= 配置 ========= */
   player.placedCards.push(card);
 
-  /* ========= デバッグログ ========= */
   const attackCount = room.players.attack.placedCards.length;
   const defenseCount = room.players.defense.placedCards.length;
 
-  console.log("Placement:",
-    "attack =", attackCount,
-    "defense =", defenseCount
-  );
-
-  /* ========= 両者3枚で Battle開始 ========= */
   if (attackCount === 3 && defenseCount === 3) {
-
-    console.log(">>> BATTLE START");
-
     room.phase = "attack";
 
-    // hand 初期化（コピー重要）
     room.players.attack.hand = [...room.players.attack.placedCards];
     room.players.defense.hand = [...room.players.defense.placedCards];
 
@@ -117,7 +103,12 @@ app.post("/api/placement/place/:roomId", (req, res) => {
         owner: "defense"
       })),
 
-      pointArea: Array(6).fill(null)
+      pointArea: Array(6).fill(null),
+
+      // ★ 勝敗用追加
+      result: null,
+      attackReplaced: false,
+      defenseReplaced: false
     };
   }
 
@@ -128,8 +119,9 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     phase: room.phase
   });
 });
+
 /* =====================
-   Battle：配置処理（step1〜6）
+   Battle：配置処理
 ===================== */
 app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
@@ -141,13 +133,10 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   const bs = room.battleState;
   const { role, cardIndex, face, position } = req.body;
 
-  /* ========= 共通ユーティリティ ========= */
   const reverseFace = f => (f === "表" ? "伏せ" : "表");
 
   const place = (card, owner, faceValue, pos) => {
-    if (bs.pointArea[pos]) {
-      throw new Error("Position already filled");
-    }
+    if (bs.pointArea[pos]) throw new Error("Position already filled");
 
     bs.pointArea[pos] = {
       card,
@@ -158,9 +147,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   };
 
   try {
-    /* =====================
-       step1：攻撃（先手）
-    ===================== */
     if (bs.step === 1) {
       if (role !== "attack") throw new Error("Not your turn");
       if (position !== 0) throw new Error("Must place at leftmost");
@@ -168,9 +154,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       const cardObj = bs.attackHand[cardIndex];
       if (!cardObj) throw new Error("Invalid card");
 
-      const card = cardObj.value;
-
-      place(card, "attack", face, 0);
+      place(cardObj.value, "attack", face, 0);
       bs.attackHand.splice(cardIndex, 1);
 
       bs.forcedFace = reverseFace(face);
@@ -180,9 +164,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.json({ success: true, battleState: bs });
     }
 
-    /* =====================
-       step2：防御（攻撃残り）
-    ===================== */
     if (bs.step === 2) {
       if (role !== "defense") throw new Error("Not your turn");
       if (face !== bs.forcedFace) throw new Error("Face forced");
@@ -190,30 +171,22 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       const cardObj = bs.attackHand[cardIndex];
       if (!cardObj) throw new Error("Invalid card");
 
-      const card = cardObj.value;
-
-      place(card, "attack", face, position);
+      place(cardObj.value, "attack", face, position);
       bs.attackHand.splice(cardIndex, 1);
 
       bs.forcedFace = null;
-      bs.currentRole = "defense";
       bs.step = 3;
 
       return res.json({ success: true, battleState: bs });
     }
 
-    /* =====================
-       step3：防御（先手）
-    ===================== */
     if (bs.step === 3) {
       if (role !== "defense") throw new Error("Not your turn");
 
       const cardObj = bs.defenseHand[cardIndex];
       if (!cardObj) throw new Error("Invalid card");
 
-      const card = cardObj.value;
-
-      place(card, "defense", face, position);
+      place(cardObj.value, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
 
       bs.forcedFace = reverseFace(face);
@@ -223,9 +196,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.json({ success: true, battleState: bs });
     }
 
-    /* =====================
-       step4：攻撃（防御残り）
-    ===================== */
     if (bs.step === 4) {
       if (role !== "attack") throw new Error("Not your turn");
       if (face !== bs.forcedFace) throw new Error("Face forced");
@@ -233,21 +203,15 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       const cardObj = bs.defenseHand[cardIndex];
       if (!cardObj) throw new Error("Invalid card");
 
-      const card = cardObj.value;
-
-      place(card, "defense", face, position);
+      place(cardObj.value, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
 
       bs.forcedFace = null;
-      bs.currentRole = "attack";
       bs.step = 5;
 
       return res.json({ success: true, battleState: bs });
     }
 
-    /* =====================
-       step5：攻撃（最終選択）
-    ===================== */
     if (bs.step === 5) {
       if (role !== "attack") throw new Error("Not your turn");
 
@@ -255,13 +219,9 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       const cardObj = combined[cardIndex];
       if (!cardObj) throw new Error("Invalid card");
 
-      const card = cardObj.value;
-      const owner = cardObj.owner;
+      place(cardObj.value, cardObj.owner, face, position);
 
-      place(card, owner, face, position);
-
-      // 元の配列から削除（重要）
-      if (owner === "attack") {
+      if (cardObj.owner === "attack") {
         bs.attackHand = bs.attackHand.filter(c => c !== cardObj);
       } else {
         bs.defenseHand = bs.defenseHand.filter(c => c !== cardObj);
@@ -271,25 +231,28 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       bs.step = 6;
     }
 
-    /* =====================
-       step6：自動配置
-    ===================== */
     if (bs.step === 6) {
-      const remainingCardObj =
+      const remaining =
         bs.attackHand[0] || bs.defenseHand[0];
 
-      if (!remainingCardObj) {
-        throw new Error("No remaining card");
-      }
+      if (!remaining) throw new Error("No remaining card");
 
-      const card = remainingCardObj.value;
-      const owner = bs.attackHand.length ? "attack" : "defense";
       const pos = bs.pointArea.findIndex(p => p === null);
 
-      place(card, owner, "表", pos);
+      place(remaining.value, remaining.owner, "表", pos);
 
       bs.attackHand = [];
       bs.defenseHand = [];
+
+      /* ===== ★勝敗ロジック追加 ===== */
+
+      const binary = bs.pointArea.map(p => String(p.card)).join("");
+
+      bs.result = {
+        originalBinary: binary,
+        finalBinary: binary,
+        attackScore: parseInt(binary, 2)
+      };
 
       return res.json({ success: true, battleState: bs });
     }
@@ -300,6 +263,53 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
+
+/* =====================
+   読み替えAPI
+===================== */
+app.post("/api/battle/replace/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) return res.status(404).json({ error: "Room not found" });
+
+  const { role } = req.body;
+  const bs = room.battleState;
+
+  if (!bs.result) {
+    return res.status(400).json({ error: "No result yet" });
+  }
+
+  let str = bs.result.finalBinary;
+
+  if (role === "attack") {
+    if (bs.attackReplaced) {
+      return res.status(400).json({ error: "Already used" });
+    }
+
+    const i = str.indexOf("000");
+    if (i !== -1) {
+      str = str.slice(0, i) + "111" + str.slice(i + 3);
+      bs.attackReplaced = true;
+    }
+  }
+
+  if (role === "defense") {
+    if (bs.defenseReplaced) {
+      return res.status(400).json({ error: "Already used" });
+    }
+
+    const i = str.indexOf("111");
+    if (i !== -1) {
+      str = str.slice(0, i) + "000" + str.slice(i + 3);
+      bs.defenseReplaced = true;
+    }
+  }
+
+  bs.result.finalBinary = str;
+  bs.result.attackScore = parseInt(str, 2);
+
+  res.json({ success: true, result: bs.result });
+});
+
 /* =====================
    サーバー起動
 ===================== */
