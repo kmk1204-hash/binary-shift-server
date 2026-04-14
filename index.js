@@ -153,8 +153,8 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (position !== 0) throw new Error("Must place at leftmost");
 
       const card = bs.attackHand[cardIndex];
-      if (!card) throw new Error("Invalid card");
-
+      if (card === undefined) throw new Error("Invalid card");
+      
       place(card, "attack", face, 0);
       bs.attackHand.splice(cardIndex, 1);
 
@@ -173,7 +173,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (face !== bs.forcedFace) throw new Error("Face forced");
 
       const card = bs.attackHand[cardIndex];
-      if (!card) throw new Error("Invalid card");
+      if (card === undefined) throw new Error("Invalid card");
 
       place(card, "attack", face, position);
       bs.attackHand.splice(cardIndex, 1);
@@ -192,7 +192,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (role !== "defense") throw new Error("Not your turn");
 
       const card = bs.defenseHand[cardIndex];
-      if (!card) throw new Error("Invalid card");
+      if (card === undefined) throw new Error("Invalid card");
 
       place(card, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
@@ -212,8 +212,8 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (face !== bs.forcedFace) throw new Error("Face forced");
 
       const card = bs.defenseHand[cardIndex];
-      if (!card) throw new Error("Invalid card");
-
+      if (card === undefined) throw new Error("Invalid card");
+      
       place(card, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
 
@@ -232,8 +232,8 @@ app.post("/api/attack/place/:roomId", (req, res) => {
 
       const combined = [...bs.attackHand, ...bs.defenseHand];
       const card = combined[cardIndex];
-      if (!card) throw new Error("Invalid card");
-
+      if (card === undefined) throw new Error("Invalid card");
+      
       const owner =
         bs.attackHand.includes(card) ? "attack" : "defense";
 
