@@ -107,8 +107,15 @@ app.post("/api/placement/place/:roomId", (req, res) => {
       currentRole: "attack",
       forcedFace: null,
 
-      attackHand: [...room.players.attack.hand],
-      defenseHand: [...room.players.defense.hand],
+      attackHand: room.players.attack.hand.map(c => ({
+        value: c,
+        owner: "attack"
+      })),
+
+      defenseHand: room.players.defense.hand.map(c => ({
+        value: c,
+        owner: "defense"
+      })),
 
       pointArea: Array(6).fill(null)
     };
@@ -141,7 +148,13 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     if (bs.pointArea[pos]) {
       throw new Error("Position already filled");
     }
-    bs.pointArea[pos] = { card, owner, face: faceValue };
+
+    bs.pointArea[pos] = {
+      card,
+      owner,
+      face: faceValue,
+      placedBy: bs.currentRole
+    };
   };
 
   try {
@@ -152,9 +165,11 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (role !== "attack") throw new Error("Not your turn");
       if (position !== 0) throw new Error("Must place at leftmost");
 
-      const card = bs.attackHand[cardIndex];
-      if (card === undefined) throw new Error("Invalid card");
-      
+      const cardObj = bs.attackHand[cardIndex];
+      if (!cardObj) throw new Error("Invalid card");
+
+      const card = cardObj.value;
+
       place(card, "attack", face, 0);
       bs.attackHand.splice(cardIndex, 1);
 
@@ -172,8 +187,10 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (role !== "defense") throw new Error("Not your turn");
       if (face !== bs.forcedFace) throw new Error("Face forced");
 
-      const card = bs.attackHand[cardIndex];
-      if (card === undefined) throw new Error("Invalid card");
+      const cardObj = bs.attackHand[cardIndex];
+      if (!cardObj) throw new Error("Invalid card");
+
+      const card = cardObj.value;
 
       place(card, "attack", face, position);
       bs.attackHand.splice(cardIndex, 1);
@@ -191,8 +208,10 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     if (bs.step === 3) {
       if (role !== "defense") throw new Error("Not your turn");
 
-      const card = bs.defenseHand[cardIndex];
-      if (card === undefined) throw new Error("Invalid card");
+      const cardObj = bs.defenseHand[cardIndex];
+      if (!cardObj) throw new Error("Invalid card");
+
+      const card = cardObj.value;
 
       place(card, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
@@ -211,9 +230,11 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (role !== "attack") throw new Error("Not your turn");
       if (face !== bs.forcedFace) throw new Error("Face forced");
 
-      const card = bs.defenseHand[cardIndex];
-      if (card === undefined) throw new Error("Invalid card");
-      
+      const cardObj = bs.defenseHand[cardIndex];
+      if (!cardObj) throw new Error("Invalid card");
+
+      const card = cardObj.value;
+
       place(card, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
 
@@ -231,18 +252,19 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       if (role !== "attack") throw new Error("Not your turn");
 
       const combined = [...bs.attackHand, ...bs.defenseHand];
-      const card = combined[cardIndex];
-      if (card === undefined) throw new Error("Invalid card");
-      
-      const owner =
-        bs.attackHand.includes(card) ? "attack" : "defense";
+      const cardObj = combined[cardIndex];
+      if (!cardObj) throw new Error("Invalid card");
+
+      const card = cardObj.value;
+      const owner = cardObj.owner;
 
       place(card, owner, face, position);
 
+      // 元の配列から削除（重要）
       if (owner === "attack") {
-        bs.attackHand = [];
+        bs.attackHand = bs.attackHand.filter(c => c !== cardObj);
       } else {
-        bs.defenseHand = [];
+        bs.defenseHand = bs.defenseHand.filter(c => c !== cardObj);
       }
 
       bs.currentRole = "defense";
@@ -253,18 +275,22 @@ app.post("/api/attack/place/:roomId", (req, res) => {
        step6：自動配置
     ===================== */
     if (bs.step === 6) {
-      const remainingCard =
+      const remainingCardObj =
         bs.attackHand[0] || bs.defenseHand[0];
 
+      if (!remainingCardObj) {
+        throw new Error("No remaining card");
+      }
+
+      const card = remainingCardObj.value;
       const owner = bs.attackHand.length ? "attack" : "defense";
       const pos = bs.pointArea.findIndex(p => p === null);
 
-      place(remainingCard, owner, "表", pos);
+      place(card, owner, "表", pos);
 
       bs.attackHand = [];
       bs.defenseHand = [];
 
-      // ラウンド完了（次フェーズへ）
       return res.json({ success: true, battleState: bs });
     }
 
@@ -274,7 +300,6 @@ app.post("/api/attack/place/:roomId", (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-
 /* =====================
    サーバー起動
 ===================== */
