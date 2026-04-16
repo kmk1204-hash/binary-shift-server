@@ -270,7 +270,20 @@ app.post("/api/replace/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   const { role, index } = req.body;
   const bs = room.battleState;
+  if (index === -1) {
 
+    // 攻撃スキップ → 防御へ
+    if (room.phase === "replace_attack") {
+      room.phase = "replace_defense";
+      return res.json({ success: true, phase: room.phase, battleState: bs });
+    }
+
+    // 防御スキップ → ラウンド終了
+    if (room.phase === "replace_defense") {
+      finalizeRound(room);
+      return res.json({ success: true, phase: room.phase, battleState: bs });
+     }
+   }
   let binary = bs.pointArea.map(p => p.card).join("");
 
   if (room.phase === "replace_attack") {
