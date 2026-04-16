@@ -15,6 +15,12 @@ app.get("/api/create-room", (req, res) => {
 
   rooms[roomId] = {
     phase: "placement",
+    round: 1,
+
+    totalScore: {
+      attack: 0,
+      defense: 0
+    },
 
     players: {
       attack: { placedCards: [], hand: [] },
@@ -28,25 +34,32 @@ app.get("/api/create-room", (req, res) => {
 });
 
 /* =====================
-   ルーム参加
-===================== */
-app.get("/api/join-room/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
-
-  res.json({ success: true });
-});
-
-/* =====================
    状態取得
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ error: "Room not found" });
 
+  // ★ 最終結果
+  if (room.phase === "final_result") {
+    const attackScore = room.totalScore.attack;
+    const defenseScore = room.totalScore.defense;
+
+    let winner = "draw";
+    if (attackScore > defenseScore) winner = "attack";
+    if (defenseScore > attackScore) winner = "defense";
+
+    return res.json({
+      phase: room.phase,
+      result: { attackScore, defenseScore, winner }
+    });
+  }
+
   res.json({
     phase: room.phase,
-    battleState: room.battleState
+    battleState: room.battleState,
+    round: room.round,
+    totalScore: room.totalScore
   });
 });
 
@@ -63,10 +76,6 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not placement phase" });
   }
 
-  if (role !== "attack" && role !== "defense") {
-    return res.status(400).json({ error: "Invalid role" });
-  }
-
   if (card !== 0 && card !== 1) {
     return res.status(400).json({ error: "Invalid card" });
   }
@@ -74,7 +83,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
   const player = room.players[role];
 
   if (player.placedCards.length >= 3) {
-    return res.status(400).json({ error: "Already placed 3 cards" });
+    return res.status(400).json({ error: "Already placed" });
   }
 
   player.placedCards.push(card);
@@ -82,8 +91,9 @@ app.post("/api/placement/place/:roomId", (req, res) => {
   const attackCount = room.players.attack.placedCards.length;
   const defenseCount = room.players.defense.placedCards.length;
 
+  /* ===== battle開始 ===== */
   if (attackCount === 3 && defenseCount === 3) {
-    room.phase = "attack";
+    room.phase = "battle";
 
     room.players.attack.hand = [...room.players.attack.placedCards];
     room.players.defense.hand = [...room.players.defense.placedCards];
@@ -103,31 +113,21 @@ app.post("/api/placement/place/:roomId", (req, res) => {
         owner: "defense"
       })),
 
-      pointArea: Array(6).fill(null),
-
-      // ★ 勝敗用追加
-      result: null,
-      attackReplaced: false,
-      defenseReplaced: false
+      pointArea: Array(6).fill(null)
     };
   }
 
-  res.json({
-    success: true,
-    attackCount,
-    defenseCount,
-    phase: room.phase
-  });
+  res.json({ success: true });
 });
 
 /* =====================
-   Battle：配置処理
+   Battle（step1〜6）
 ===================== */
 app.post("/api/attack/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ error: "Room not found" });
-  if (room.phase !== "attack") {
-    return res.status(400).json({ error: "Not attack phase" });
+  if (room.phase !== "battle") {
+    return res.status(400).json({ error: "Not battle phase" });
   }
 
   const bs = room.battleState;
@@ -136,7 +136,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   const reverseFace = f => (f === "表" ? "伏せ" : "表");
 
   const place = (card, owner, faceValue, pos) => {
-    if (bs.pointArea[pos]) throw new Error("Position already filled");
+    if (bs.pointArea[pos]) throw new Error("Position filled");
 
     bs.pointArea[pos] = {
       card,
@@ -147,14 +147,16 @@ app.post("/api/attack/place/:roomId", (req, res) => {
   };
 
   try {
+
+    /* ===== step1 ===== */
     if (bs.step === 1) {
       if (role !== "attack") throw new Error("Not your turn");
-      if (position !== 0) throw new Error("Must place at leftmost");
+      if (position !== 0) throw new Error("Must left");
 
-      const cardObj = bs.attackHand[cardIndex];
-      if (!cardObj) throw new Error("Invalid card");
+      const c = bs.attackHand[cardIndex];
+      if (!c) throw new Error("Invalid card");
 
-      place(cardObj.value, "attack", face, 0);
+      place(c.value, "attack", face, 0);
       bs.attackHand.splice(cardIndex, 1);
 
       bs.forcedFace = reverseFace(face);
@@ -164,29 +166,32 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.json({ success: true, battleState: bs });
     }
 
+    /* ===== step2 ===== */
     if (bs.step === 2) {
       if (role !== "defense") throw new Error("Not your turn");
-      if (face !== bs.forcedFace) throw new Error("Face forced");
+      if (face !== bs.forcedFace) throw new Error("Forced");
 
-      const cardObj = bs.attackHand[cardIndex];
-      if (!cardObj) throw new Error("Invalid card");
+      const c = bs.attackHand[cardIndex];
+      if (!c) throw new Error("Invalid card");
 
-      place(cardObj.value, "attack", face, position);
+      place(c.value, "attack", face, position);
       bs.attackHand.splice(cardIndex, 1);
 
       bs.forcedFace = null;
+      bs.currentRole = "defense";
       bs.step = 3;
 
       return res.json({ success: true, battleState: bs });
     }
 
+    /* ===== step3 ===== */
     if (bs.step === 3) {
       if (role !== "defense") throw new Error("Not your turn");
 
-      const cardObj = bs.defenseHand[cardIndex];
-      if (!cardObj) throw new Error("Invalid card");
+      const c = bs.defenseHand[cardIndex];
+      if (!c) throw new Error("Invalid card");
 
-      place(cardObj.value, "defense", face, position);
+      place(c.value, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
 
       bs.forcedFace = reverseFace(face);
@@ -196,124 +201,158 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.json({ success: true, battleState: bs });
     }
 
+    /* ===== step4 ===== */
     if (bs.step === 4) {
       if (role !== "attack") throw new Error("Not your turn");
-      if (face !== bs.forcedFace) throw new Error("Face forced");
+      if (face !== bs.forcedFace) throw new Error("Forced");
 
-      const cardObj = bs.defenseHand[cardIndex];
-      if (!cardObj) throw new Error("Invalid card");
+      const c = bs.defenseHand[cardIndex];
+      if (!c) throw new Error("Invalid card");
 
-      place(cardObj.value, "defense", face, position);
+      place(c.value, "defense", face, position);
       bs.defenseHand.splice(cardIndex, 1);
 
       bs.forcedFace = null;
+      bs.currentRole = "attack";
       bs.step = 5;
 
       return res.json({ success: true, battleState: bs });
     }
 
+    /* ===== step5 ===== */
     if (bs.step === 5) {
       if (role !== "attack") throw new Error("Not your turn");
 
       const combined = [...bs.attackHand, ...bs.defenseHand];
-      const cardObj = combined[cardIndex];
-      if (!cardObj) throw new Error("Invalid card");
+      const c = combined[cardIndex];
+      if (!c) throw new Error("Invalid card");
 
-      place(cardObj.value, cardObj.owner, face, position);
+      place(c.value, c.owner, face, position);
 
-      if (cardObj.owner === "attack") {
-        bs.attackHand = bs.attackHand.filter(c => c !== cardObj);
+      if (c.owner === "attack") {
+        bs.attackHand = bs.attackHand.filter(x => x !== c);
       } else {
-        bs.defenseHand = bs.defenseHand.filter(c => c !== cardObj);
+        bs.defenseHand = bs.defenseHand.filter(x => x !== c);
       }
 
       bs.currentRole = "defense";
       bs.step = 6;
     }
 
+    /* ===== step6 ===== */
     if (bs.step === 6) {
-      const remaining =
-        bs.attackHand[0] || bs.defenseHand[0];
+      const c = bs.attackHand[0] || bs.defenseHand[0];
+      if (!c) throw new Error("No card");
 
-      if (!remaining) throw new Error("No remaining card");
+      const owner = bs.attackHand.length ? "attack" : "defense";
+      const pos = bs.pointArea.findIndex(p => !p);
 
-      const pos = bs.pointArea.findIndex(p => p === null);
-
-      place(remaining.value, remaining.owner, "表", pos);
+      place(c.value, owner, "表", pos);
 
       bs.attackHand = [];
       bs.defenseHand = [];
 
-      /* ===== ★勝敗ロジック追加 ===== */
+      // ★ 読み替えへ
+      room.phase = "replace_attack";
 
-      const binary = bs.pointArea.map(p => String(p.card)).join("");
-
-      bs.result = {
-        originalBinary: binary,
-        finalBinary: binary,
-        attackScore: parseInt(binary, 2)
-      };
-
-      return res.json({ success: true, battleState: bs });
+      return res.json({ success: true, phase: room.phase, battleState: bs });
     }
-
-    res.status(400).json({ error: "Invalid step" });
 
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    return res.status(400).json({ error: e.message });
   }
 });
 
 /* =====================
-   読み替えAPI
+   読み替え
 ===================== */
-app.post("/api/battle/replace/:roomId", (req, res) => {
+app.post("/api/replace/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
-
-  const { role } = req.body;
+  const { role, index } = req.body;
   const bs = room.battleState;
 
-  if (!bs.result) {
-    return res.status(400).json({ error: "No result yet" });
+  let binary = bs.pointArea.map(p => p.card).join("");
+
+  if (room.phase === "replace_attack") {
+    if (role !== "attack") return res.status(400).json({ error: "Not turn" });
+    if (binary.substr(index, 3) !== "000")
+      return res.status(400).json({ error: "Invalid" });
+
+    for (let i = 0; i < 3; i++) {
+      bs.pointArea[index + i].card = "1";
+    }
+
+    room.phase = "replace_defense";
+    return res.json({ success: true, phase: room.phase, battleState: bs });
   }
 
-  let str = bs.result.finalBinary;
+  if (room.phase === "replace_defense") {
+    if (role !== "defense") return res.status(400).json({ error: "Not turn" });
+    if (binary.substr(index, 3) !== "111")
+      return res.status(400).json({ error: "Invalid" });
 
-  if (role === "attack") {
-    if (bs.attackReplaced) {
-      return res.status(400).json({ error: "Already used" });
+    for (let i = 0; i < 3; i++) {
+      bs.pointArea[index + i].card = "0";
     }
 
-    const i = str.indexOf("000");
-    if (i !== -1) {
-      str = str.slice(0, i) + "111" + str.slice(i + 3);
-      bs.attackReplaced = true;
-    }
+    finalizeRound(room);
+    return res.json({ success: true, phase: room.phase, battleState: bs });
   }
 
-  if (role === "defense") {
-    if (bs.defenseReplaced) {
-      return res.status(400).json({ error: "Already used" });
-    }
-
-    const i = str.indexOf("111");
-    if (i !== -1) {
-      str = str.slice(0, i) + "000" + str.slice(i + 3);
-      bs.defenseReplaced = true;
-    }
-  }
-
-  bs.result.finalBinary = str;
-  bs.result.attackScore = parseInt(str, 2);
-
-  res.json({ success: true, result: bs.result });
+  res.status(400).json({ error: "Invalid phase" });
 });
 
 /* =====================
-   サーバー起動
+   ラウンド終了
+===================== */
+function finalizeRound(room) {
+  const bs = room.battleState;
+
+  const binary = bs.pointArea.map(p => p.card).join("");
+  const score = parseInt(binary, 2);
+
+  room.totalScore.attack += score;
+
+  bs.finalBinary = binary;
+  bs.finalScore = score;
+
+  if (room.round === 1) {
+    room.phase = "round_result";
+  } else {
+    room.phase = "final_result";
+  }
+}
+
+/* =====================
+   次ラウンド
+===================== */
+app.post("/api/next-round/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+
+  if (room.phase !== "round_result") {
+    return res.status(400).json({ error: "Invalid phase" });
+  }
+
+  room.round = 2;
+
+  // 攻守入替
+  const temp = room.players.attack;
+  room.players.attack = room.players.defense;
+  room.players.defense = temp;
+
+  room.players.attack.placedCards = [];
+  room.players.defense.placedCards = [];
+
+  room.phase = "placement";
+  room.battleState = null;
+
+  res.json({ success: true });
+});
+
+/* =====================
+   起動
 ===================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Binary Shift Server running on port ${PORT}`);
+  console.log("Server running");
 });
