@@ -34,6 +34,19 @@ app.get("/api/create-room", (req, res) => {
 });
 
 /* =====================
+   ルーム参加
+===================== */
+app.get("/api/join-room/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
+
+  res.json({ success: true });
+});
+
+/* =====================
    状態取得
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
