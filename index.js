@@ -286,9 +286,6 @@ app.post("/api/replace/:roomId", (req, res) => {
   const { role, index } = req.body;
   const bs = room.battleState;
 
-  // =====================
-  // ユーティリティ
-  // =====================
   function hasOwnPlacedCard(bs, index, role) {
     for (let i = 0; i < 3; i++) {
       if (bs.pointArea[index + i].placedBy === role) {
@@ -299,43 +296,49 @@ app.post("/api/replace/:roomId", (req, res) => {
   }
 
   // =====================
-  // スキップ処理
+  // スキップ
   // =====================
   if (index === -1) {
-    // 攻撃スキップ → 防御へ
     if (room.phase === "replace_attack") {
       room.phase = "replace_defense";
-      return res.json({ success: true, phase: room.phase, battleState: bs });
+      return res.json({
+        success: true,
+        phase: room.phase,
+        battleState: bs,
+        lastReplaceIndex: room.lastReplaceIndex ?? null
+      });
     }
 
-    // 防御スキップ → ラウンド終了
     if (room.phase === "replace_defense") {
+      room.lastReplaceIndex = null;
       finalizeRound(room);
-      return res.json({ success: true, phase: room.phase, battleState: bs });
+      return res.json({
+        success: true,
+        phase: room.phase,
+        battleState: bs,
+        lastReplaceIndex: null
+      });
     }
   }
 
-  // indexの安全チェック（念のため）
   if (index < 0 || index > 3) {
     return res.status(400).json({ error: "Invalid index" });
   }
 
-  let binary = bs.pointArea.map(p => p.card).join("");
+  const binary = bs.pointArea.map(p => p.card).join("");
 
   // =====================
-  // 攻撃側 replace
+  // attack
   // =====================
   if (room.phase === "replace_attack") {
     if (role !== "attack") {
       return res.status(400).json({ error: "Not turn" });
     }
 
-    // 000チェック
     if (binary.substr(index, 3) !== "000") {
       return res.status(400).json({ error: "Invalid pattern" });
     }
 
-    // ★ 追加：自分が置いたカードが含まれているか
     if (!hasOwnPlacedCard(bs, index, "attack")) {
       return res.status(400).json({ error: "No own placed card" });
     }
@@ -345,24 +348,36 @@ app.post("/api/replace/:roomId", (req, res) => {
       bs.pointArea[index + i].card = "1";
     }
 
+    // ★ ここ重要：保存
+    room.lastReplaceIndex = index;
+
     room.phase = "replace_defense";
-    return res.json({ success: true, phase: room.phase, battleState: bs });
+
+    return res.json({
+      success: true,
+      phase: room.phase,
+      battleState: bs,
+      lastReplaceIndex: room.lastReplaceIndex
+    });
   }
 
   // =====================
-  // 防御側 replace
+  // defense
   // =====================
   if (room.phase === "replace_defense") {
     if (role !== "defense") {
       return res.status(400).json({ error: "Not turn" });
     }
 
-    // 111チェック
+    // ★ 同じ場所禁止
+    if (index === room.lastReplaceIndex) {
+      return res.status(400).json({ error: "Same position not allowed" });
+    }
+
     if (binary.substr(index, 3) !== "111") {
       return res.status(400).json({ error: "Invalid pattern" });
     }
 
-    // ★ 追加：自分が置いたカードが含まれているか
     if (!hasOwnPlacedCard(bs, index, "defense")) {
       return res.status(400).json({ error: "No own placed card" });
     }
@@ -372,13 +387,19 @@ app.post("/api/replace/:roomId", (req, res) => {
       bs.pointArea[index + i].card = "0";
     }
 
+    // リセット
+    room.lastReplaceIndex = null;
+
     finalizeRound(room);
-    return res.json({ success: true, phase: room.phase, battleState: bs });
+
+    return res.json({
+      success: true,
+      phase: room.phase,
+      battleState: bs,
+      lastReplaceIndex: null
+    });
   }
 
-  // =====================
-  // その他
-  // =====================
   return res.status(400).json({ error: "Invalid phase" });
 });
 /* =====================
