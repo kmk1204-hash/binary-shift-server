@@ -232,50 +232,50 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       return res.json({ success: true, battleState: bs });
     }
 
-    /* ===== step5 ===== */
-    if (bs.step === 5) {
-      if (role !== "attack") throw new Error("Not your turn");
+  /* ===== step5（＋step6統合） ===== */
+if (bs.step === 5) {
+  if (role !== "attack") throw new Error("Not your turn");
 
-      const combined = [...bs.attackHand, ...bs.defenseHand];
-      const c = combined[cardIndex];
-      if (!c) throw new Error("Invalid card");
+  const combined = [...bs.attackHand, ...bs.defenseHand];
+  const c = combined[cardIndex];
+  if (!c) throw new Error("Invalid card");
 
-      place(c.value, c.owner, face, position);
+  // 5枚目配置
+  place(c.value, c.owner, face, position);
 
-      if (c.owner === "attack") {
-        bs.attackHand = bs.attackHand.filter(x => x !== c);
-      } else {
-        bs.defenseHand = bs.defenseHand.filter(x => x !== c);
-      }
-
-      bs.currentRole = "defense";
-      bs.step = 6;
-      return res.json({ success: true, battleState: bs });
-    }
-
-    /* ===== step6 ===== */
-    if (bs.step === 6) {
-      const c = bs.attackHand[0] || bs.defenseHand[0];
-      if (!c) throw new Error("No card");
-
-      const owner = bs.attackHand.length ? "attack" : "defense";
-      const pos = bs.pointArea.findIndex(p => !p);
-
-      place(c.value, owner, "表", pos);
-
-      bs.attackHand = [];
-      bs.defenseHand = [];
-
-      // ★ 読み替えへ
-      room.phase = "replace_attack";
-
-      return res.json({ success: true, phase: room.phase, battleState: bs });
-    }
-
-  } catch (e) {
-    return res.status(400).json({ error: e.message });
+  if (c.owner === "attack") {
+    bs.attackHand = bs.attackHand.filter(x => x !== c);
+  } else {
+    bs.defenseHand = bs.defenseHand.filter(x => x !== c);
   }
-});
+
+  // =====================
+  // ★ ここから旧step6
+  // =====================
+
+  const lastCard = bs.attackHand[0] || bs.defenseHand[0];
+  if (!lastCard) throw new Error("No card");
+
+  const owner = bs.attackHand.length ? "attack" : "defense";
+  const pos = bs.pointArea.findIndex(p => !p);
+  if (pos === -1) throw new Error("No empty position");
+
+  // 6枚目配置（自動）
+  place(lastCard.value, owner, "表", pos);
+
+  // 手札クリア
+  bs.attackHand = [];
+  bs.defenseHand = [];
+
+  // replaceへ
+  room.phase = "replace_attack";
+
+  return res.json({
+    success: true,
+    phase: room.phase,
+    battleState: bs
+  });
+}
 
 /* =====================
    読み替え
