@@ -250,6 +250,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
 
       bs.currentRole = "defense";
       bs.step = 6;
+      return res.json({ success: true, battleState: bs });
     }
 
     /* ===== step6 ===== */
