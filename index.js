@@ -53,7 +53,6 @@ app.get("/api/room-state/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ error: "Room not found" });
 
-  // ★ 最終結果
   if (room.phase === "final_result") {
     const attackScore = room.totalScore.attack;
     const defenseScore = room.totalScore.defense;
@@ -64,18 +63,19 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
     return res.json({
       phase: room.phase,
-      result: { attackScore, defenseScore, winner }
+      result: { attackScore, defenseScore, winner },
+      lastReplaceIndex: room.lastReplaceIndex ?? null
     });
   }
 
-  res.json({
+  return res.json({
     phase: room.phase,
     battleState: room.battleState,
     round: room.round,
-    totalScore: room.totalScore
+    totalScore: room.totalScore,
+    lastReplaceIndex: room.lastReplaceIndex ?? null
   });
 });
-
 /* =====================
    配置フェーズ
 ===================== */
@@ -301,17 +301,22 @@ app.post("/api/replace/:roomId", (req, res) => {
   if (index === -1) {
     if (room.phase === "replace_attack") {
       room.phase = "replace_defense";
+      bs.currentRole = "defense";
+      room.lastReplaceIndex = null;
+
       return res.json({
         success: true,
         phase: room.phase,
         battleState: bs,
-        lastReplaceIndex: room.lastReplaceIndex ?? null
+        lastReplaceIndex: room.lastReplaceIndex
       });
     }
 
     if (room.phase === "replace_defense") {
+      bs.currentRole = null;
       room.lastReplaceIndex = null;
       finalizeRound(room);
+
       return res.json({
         success: true,
         phase: room.phase,
@@ -343,15 +348,13 @@ app.post("/api/replace/:roomId", (req, res) => {
       return res.status(400).json({ error: "No own placed card" });
     }
 
-    // 変換
     for (let i = 0; i < 3; i++) {
       bs.pointArea[index + i].card = "1";
     }
 
-    // ★ ここ重要：保存
     room.lastReplaceIndex = index;
-
     room.phase = "replace_defense";
+    bs.currentRole = "defense";
 
     return res.json({
       success: true,
@@ -369,7 +372,6 @@ app.post("/api/replace/:roomId", (req, res) => {
       return res.status(400).json({ error: "Not turn" });
     }
 
-    // ★ 同じ場所禁止
     if (index === room.lastReplaceIndex) {
       return res.status(400).json({ error: "Same position not allowed" });
     }
@@ -382,12 +384,11 @@ app.post("/api/replace/:roomId", (req, res) => {
       return res.status(400).json({ error: "No own placed card" });
     }
 
-    // 変換
     for (let i = 0; i < 3; i++) {
       bs.pointArea[index + i].card = "0";
     }
 
-    // リセット
+    bs.currentRole = null;
     room.lastReplaceIndex = null;
 
     finalizeRound(room);
