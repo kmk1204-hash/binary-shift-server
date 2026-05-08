@@ -22,6 +22,11 @@ app.get("/api/create-room", (req, res) => {
       defense: 0
     },
 
+    finalBinary: {
+       attack: null,
+       defense: null
+    },
+     
     players: {
       attack: { placedCards: [], hand: [] },
       defense: { placedCards: [], hand: [] }
@@ -72,9 +77,16 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
     return res.json({
       phase: room.phase,
-      result: { attackScore, defenseScore, winner },
+      result: {
+        attackScore,
+        defenseScore,
+        attackBinary: room.finalBinary.attack,
+        defenseBinary: room.finalBinary.defense,
+        winner
+      },
       round: room.round,
       totalScore: room.totalScore,
+      finalBinary: room.finalBinary,
       placementInfo,
       lastReplaceIndex: room.lastReplaceIndex ?? null,
       nextRoundReady: room.nextRoundReady ?? null
@@ -449,6 +461,9 @@ function finalizeRound(room) {
   // 現在のattackプレイヤーにスコア加算
   room.totalScore.attack += score;
 
+  // 現在のattackプレイヤーの最終二進数を保存
+  room.finalBinary.attack = binary;
+
   bs.finalBinary = binary;
   bs.finalScore = score;
   bs.currentRole = null;
@@ -456,7 +471,6 @@ function finalizeRound(room) {
   room.lastReplaceIndex = null;
 
   if (room.round === 1) {
-    // 両プレイヤーが結果確認後に次ラウンドへ進むためのReady状態
     room.nextRoundReady = {
       attack: false,
       defense: false
@@ -468,7 +482,6 @@ function finalizeRound(room) {
     room.phase = "final_result";
   }
 }
-
 /* =====================
    次ラウンド
 ===================== */
@@ -528,6 +541,11 @@ app.post("/api/next-round/:roomId", (req, res) => {
   const tempScore = room.totalScore.attack;
   room.totalScore.attack = room.totalScore.defense;
   room.totalScore.defense = tempScore;
+
+  // ★ 最終二進数もプレイヤーに合わせて入替
+  const tempBinary = room.finalBinary.attack;
+  room.finalBinary.attack = room.finalBinary.defense;
+  room.finalBinary.defense = tempBinary;
 
   // placement用にリセット
   room.players.attack.placedCards = [];
