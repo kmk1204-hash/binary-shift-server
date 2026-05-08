@@ -55,6 +55,13 @@ app.get("/api/room-state/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ error: "Room not found" });
 
+  const placementInfo = {
+    attackCount: room.players.attack.placedCards.length,
+    defenseCount: room.players.defense.placedCards.length,
+    attackCards: room.players.attack.placedCards,
+    defenseCards: room.players.defense.placedCards
+  };
+
   if (room.phase === "final_result") {
     const attackScore = room.totalScore.attack;
     const defenseScore = room.totalScore.defense;
@@ -68,6 +75,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
       result: { attackScore, defenseScore, winner },
       round: room.round,
       totalScore: room.totalScore,
+      placementInfo,
       lastReplaceIndex: room.lastReplaceIndex ?? null,
       nextRoundReady: room.nextRoundReady ?? null
     });
@@ -78,11 +86,11 @@ app.get("/api/room-state/:roomId", (req, res) => {
     battleState: room.battleState,
     round: room.round,
     totalScore: room.totalScore,
+    placementInfo,
     lastReplaceIndex: room.lastReplaceIndex ?? null,
     nextRoundReady: room.nextRoundReady ?? null
   });
 });
-
 /* =====================
    配置フェーズ
 ===================== */
@@ -96,11 +104,18 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Not placement phase" });
   }
 
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({ error: "Invalid role" });
+  }
+
   if (card !== 0 && card !== 1) {
     return res.status(400).json({ error: "Invalid card" });
   }
 
   const player = room.players[role];
+  if (!player) {
+    return res.status(400).json({ error: "Player not found" });
+  }
 
   if (player.placedCards.length >= 3) {
     return res.status(400).json({ error: "Already placed" });
@@ -137,9 +152,20 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     };
   }
 
-  res.json({ success: true });
+  return res.json({
+    success: true,
+    phase: room.phase,
+    attackCount,
+    defenseCount,
+    placementInfo: {
+      attackCount,
+      defenseCount,
+      attackCards: room.players.attack.placedCards,
+      defenseCards: room.players.defense.placedCards
+    },
+    battleState: room.battleState
+  });
 });
-
 /* =====================
    Battle（step1〜6）
 ===================== */
