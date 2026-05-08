@@ -29,6 +29,7 @@ app.get("/api/create-room", (req, res) => {
 
     battleState: null,
     lastReplaceIndex: null
+    nextRoundReady: null
   };
 
   res.json({ roomId });
@@ -65,7 +66,10 @@ app.get("/api/room-state/:roomId", (req, res) => {
     return res.json({
       phase: room.phase,
       result: { attackScore, defenseScore, winner },
-      lastReplaceIndex: room.lastReplaceIndex ?? null
+      round: room.round,
+      totalScore: room.totalScore,
+      lastReplaceIndex: room.lastReplaceIndex ?? null,
+      nextRoundReady: room.nextRoundReady ?? null
     });
   }
 
@@ -74,9 +78,11 @@ app.get("/api/room-state/:roomId", (req, res) => {
     battleState: room.battleState,
     round: room.round,
     totalScore: room.totalScore,
-    lastReplaceIndex: room.lastReplaceIndex ?? null
+    lastReplaceIndex: room.lastReplaceIndex ?? null,
+    nextRoundReady: room.nextRoundReady ?? null
   });
 });
+
 /* =====================
    配置フェーズ
 ===================== */
@@ -424,18 +430,25 @@ function finalizeRound(room) {
   room.lastReplaceIndex = null;
 
   if (room.round === 1) {
+    // 両プレイヤーが結果確認後に次ラウンドへ進むためのReady状態
+    room.nextRoundReady = {
+      attack: false,
+      defense: false
+    };
+
     room.phase = "round_result";
   } else {
+    room.nextRoundReady = null;
     room.phase = "final_result";
   }
 }
-
 
 /* =====================
    次ラウンド
 ===================== */
 app.post("/api/next-round/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
+  const { role } = req.body;
 
   if (!room) {
     return res.status(404).json({ error: "Room not found" });
@@ -449,6 +462,35 @@ app.post("/api/next-round/:roomId", (req, res) => {
     return res.status(400).json({ error: "Invalid round" });
   }
 
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({ error: "Invalid role" });
+  }
+
+  if (!room.nextRoundReady) {
+    room.nextRoundReady = {
+      attack: false,
+      defense: false
+    };
+  }
+
+  // 押したプレイヤーをReadyにする
+  room.nextRoundReady[role] = true;
+
+  // まだ両方Readyではない場合は待機
+  if (!room.nextRoundReady.attack || !room.nextRoundReady.defense) {
+    return res.json({
+      success: true,
+      waiting: true,
+      phase: room.phase,
+      round: room.round,
+      nextRoundReady: room.nextRoundReady
+    });
+  }
+
+  // =====================
+  // 両方Ready → 2ラウンド目へ
+  // =====================
+
   room.round = 2;
 
   // 攻守入替
@@ -456,7 +498,7 @@ app.post("/api/next-round/:roomId", (req, res) => {
   room.players.attack = room.players.defense;
   room.players.defense = tempPlayer;
 
-  // ★ スコアもプレイヤーに合わせて入替
+  // スコアもプレイヤーに合わせて入替
   const tempScore = room.totalScore.attack;
   room.totalScore.attack = room.totalScore.defense;
   room.totalScore.defense = tempScore;
@@ -470,13 +512,16 @@ app.post("/api/next-round/:roomId", (req, res) => {
 
   room.battleState = null;
   room.lastReplaceIndex = null;
+  room.nextRoundReady = null;
   room.phase = "placement";
 
-  res.json({
+  return res.json({
     success: true,
+    waiting: false,
     phase: room.phase,
     round: room.round,
-    totalScore: room.totalScore
+    totalScore: room.totalScore,
+    nextRoundReady: room.nextRoundReady
   });
 });
 /* =====================
