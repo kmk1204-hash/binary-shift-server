@@ -27,7 +27,8 @@ app.get("/api/create-room", (req, res) => {
       defense: { placedCards: [], hand: [] }
     },
 
-    battleState: null
+    battleState: null,
+    lastReplaceIndex: null
   };
 
   res.json({ roomId });
@@ -406,16 +407,23 @@ app.post("/api/replace/:roomId", (req, res) => {
 /* =====================
    ラウンド終了
 ===================== */
+/* =====================
+   ラウンド終了
+===================== */
 function finalizeRound(room) {
   const bs = room.battleState;
 
   const binary = bs.pointArea.map(p => p.card).join("");
   const score = parseInt(binary, 2);
 
+  // 現在のattackプレイヤーにスコア加算
   room.totalScore.attack += score;
 
   bs.finalBinary = binary;
   bs.finalScore = score;
+  bs.currentRole = null;
+
+  room.lastReplaceIndex = null;
 
   if (room.round === 1) {
     room.phase = "round_result";
@@ -427,29 +435,54 @@ function finalizeRound(room) {
 /* =====================
    次ラウンド
 ===================== */
+/* =====================
+   次ラウンド
+===================== */
 app.post("/api/next-round/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
+
+  if (!room) {
+    return res.status(404).json({ error: "Room not found" });
+  }
 
   if (room.phase !== "round_result") {
     return res.status(400).json({ error: "Invalid phase" });
   }
 
+  if (room.round !== 1) {
+    return res.status(400).json({ error: "Invalid round" });
+  }
+
   room.round = 2;
 
   // 攻守入替
-  const temp = room.players.attack;
+  const tempPlayer = room.players.attack;
   room.players.attack = room.players.defense;
-  room.players.defense = temp;
+  room.players.defense = tempPlayer;
 
+  // ★ スコアもプレイヤーに合わせて入替
+  const tempScore = room.totalScore.attack;
+  room.totalScore.attack = room.totalScore.defense;
+  room.totalScore.defense = tempScore;
+
+  // placement用にリセット
   room.players.attack.placedCards = [];
   room.players.defense.placedCards = [];
 
-  room.phase = "placement";
+  room.players.attack.hand = [];
+  room.players.defense.hand = [];
+
   room.battleState = null;
+  room.lastReplaceIndex = null;
+  room.phase = "placement";
 
-  res.json({ success: true });
+  res.json({
+    success: true,
+    phase: room.phase,
+    round: room.round,
+    totalScore: room.totalScore
+  });
 });
-
 /* =====================
    起動
 ===================== */
