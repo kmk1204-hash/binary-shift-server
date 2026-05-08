@@ -28,7 +28,7 @@ app.get("/api/create-room", (req, res) => {
     },
 
     battleState: null,
-    lastReplaceIndex: null
+    lastReplaceIndex: null,
     nextRoundReady: null
   };
 
