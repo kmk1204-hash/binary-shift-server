@@ -103,6 +103,7 @@ app.get("/api/create-room", (req, res) => {
 
     battleState: null,
     openInfo: null,
+    openReady: null,
     lastReplaceIndex: null,
     nextRoundReady: null
   };
@@ -159,6 +160,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
       finalBinary: room.finalBinary,
       placementInfo,
       openInfo: room.openInfo ?? null,
+      openReady: room.openReady ?? null,
       lastReplaceIndex: room.lastReplaceIndex ?? null,
       nextRoundReady: room.nextRoundReady ?? null
     });
@@ -237,7 +239,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 });
 
 /* =====================
-   openフェーズ
+   openフェーズ：defenseが公開情報を確定
 ===================== */
 app.post("/api/open/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
@@ -251,6 +253,10 @@ app.post("/api/open/:roomId", (req, res) => {
 
   if (role !== "defense") {
     return res.status(400).json({ error: "Only defense can open" });
+  }
+
+  if (room.openInfo && room.openInfo.completed) {
+    return res.status(400).json({ error: "Open already completed" });
   }
 
   if (!Array.isArray(selectedIndexes)) {
@@ -268,7 +274,6 @@ app.post("/api/open/:roomId", (req, res) => {
     return res.status(400).json({ error: "Build not completed" });
   }
 
-  // indexの妥当性確認
   const indexSet = new Set();
 
   for (const rawIndex of selectedIndexes) {
@@ -289,10 +294,8 @@ app.post("/api/open/:roomId", (req, res) => {
     indexSet.add(index);
   }
 
-  // selectedIndexesから実際のdefenseカードを取り出す
-  // ※このindex情報は保存しない
+  // indexはここで集計にだけ使い、保存しない
   const selectedCards = [...indexSet].map(index => defenseCards[index]);
-
   const defenseOpen = countCards(selectedCards);
 
   const scoutCount = Math.max(0, defenseOpen.total - 1);
@@ -304,18 +307,80 @@ app.post("/api/open/:roomId", (req, res) => {
     attackScouted
   };
 
-  // open完了 → battle開始
-  room.phase = "battle";
-  initializeBattleState(room);
+  // 両者確認待ち
+  room.openReady = {
+    attack: false,
+    defense: false
+  };
+
+  // ここではまだbattleへ進めない
+  room.phase = "open";
+  room.battleState = null;
 
   return res.json({
     success: true,
     phase: room.phase,
     openInfo: room.openInfo,
+    openReady: room.openReady,
     battleState: room.battleState
   });
 });
 
+/* =====================
+   open確認完了
+===================== */
+app.post("/api/open-ready/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) return res.status(404).json({ error: "Room not found" });
+
+  const { role } = req.body;
+
+  if (room.phase !== "open") {
+    return res.status(400).json({ error: "Not open phase" });
+  }
+
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({ error: "Invalid role" });
+  }
+
+  if (!room.openInfo || !room.openInfo.completed) {
+    return res.status(400).json({ error: "Open not completed" });
+  }
+
+  if (!room.openReady) {
+    room.openReady = {
+      attack: false,
+      defense: false
+    };
+  }
+
+  room.openReady[role] = true;
+
+  // まだ両者確認完了ではない
+  if (!room.openReady.attack || !room.openReady.defense) {
+    return res.json({
+      success: true,
+      waiting: true,
+      phase: room.phase,
+      openInfo: room.openInfo,
+      openReady: room.openReady,
+      battleState: room.battleState
+    });
+  }
+
+  // 両者確認完了 → battle開始
+  room.phase = "battle";
+  initializeBattleState(room);
+
+  return res.json({
+    success: true,
+    waiting: false,
+    phase: room.phase,
+    openInfo: room.openInfo,
+    openReady: room.openReady,
+    battleState: room.battleState
+  });
+});
 
 /* =====================
    Battle（step1〜6）
@@ -689,6 +754,7 @@ app.post("/api/next-round/:roomId", (req, res) => {
 
   room.battleState = null;
   room.openInfo = null;
+  room.openReady = null;
   room.lastReplaceIndex = null;
   room.nextRoundReady = null;
   room.phase = "placement";
