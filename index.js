@@ -173,6 +173,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     totalScore: room.totalScore,
     placementInfo,
     openInfo: room.openInfo ?? null,
+    openReady: room.openReady ?? null,
     lastReplaceIndex: room.lastReplaceIndex ?? null,
     nextRoundReady: room.nextRoundReady ?? null
   });
