@@ -7,6 +7,75 @@ app.use(express.json());
 
 const rooms = {};
 
+function createEmptyOpenInfo() {
+  return {
+    completed: false,
+
+    defenseOpen: {
+      zeroCount: 0,
+      oneCount: 0,
+      total: 0
+    },
+
+    attackScouted: {
+      zeroCount: 0,
+      oneCount: 0,
+      total: 0
+    }
+  };
+}
+
+function countCards(cards) {
+  return {
+    zeroCount: cards.filter(c => c === 0).length,
+    oneCount: cards.filter(c => c === 1).length,
+    total: cards.length
+  };
+}
+
+function makeScoutCounts(cards, scoutCount) {
+  const shuffled = [...cards];
+
+  // Fisher-Yates shuffle
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = temp;
+  }
+
+  const picked = shuffled.slice(0, scoutCount);
+
+  return {
+    zeroCount: picked.filter(v => v === 0).length,
+    oneCount: picked.filter(v => v === 1).length,
+    total: picked.length
+  };
+}
+
+function initializeBattleState(room) {
+  room.players.attack.hand = [...room.players.attack.placedCards];
+  room.players.defense.hand = [...room.players.defense.placedCards];
+
+  room.battleState = {
+    step: 1,
+    currentRole: "attack",
+    forcedFace: null,
+
+    attackHand: room.players.attack.hand.map(c => ({
+      value: c,
+      owner: "attack"
+    })),
+
+    defenseHand: room.players.defense.hand.map(c => ({
+      value: c,
+      owner: "defense"
+    })),
+
+    pointArea: Array(6).fill(null)
+  };
+}
+
 /* =====================
    ルーム作成
 ===================== */
@@ -23,16 +92,17 @@ app.get("/api/create-room", (req, res) => {
     },
 
     finalBinary: {
-       attack: null,
-       defense: null
+      attack: null,
+      defense: null
     },
-     
+
     players: {
       attack: { placedCards: [], hand: [] },
       defense: { placedCards: [], hand: [] }
     },
 
     battleState: null,
+    openInfo: null,
     lastReplaceIndex: null,
     nextRoundReady: null
   };
@@ -88,6 +158,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
       totalScore: room.totalScore,
       finalBinary: room.finalBinary,
       placementInfo,
+      openInfo: room.openInfo ?? null,
       lastReplaceIndex: room.lastReplaceIndex ?? null,
       nextRoundReady: room.nextRoundReady ?? null
     });
@@ -99,12 +170,14 @@ app.get("/api/room-state/:roomId", (req, res) => {
     round: room.round,
     totalScore: room.totalScore,
     placementInfo,
+    openInfo: room.openInfo ?? null,
     lastReplaceIndex: room.lastReplaceIndex ?? null,
     nextRoundReady: room.nextRoundReady ?? null
   });
 });
 /* =====================
    配置フェーズ
+   ※ 実質 build：3枚のカード選択
 ===================== */
 app.post("/api/placement/place/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
@@ -138,30 +211,13 @@ app.post("/api/placement/place/:roomId", (req, res) => {
   const attackCount = room.players.attack.placedCards.length;
   const defenseCount = room.players.defense.placedCards.length;
 
-  /* ===== battle開始 ===== */
+  /* ===== build完了 → openへ ===== */
   if (attackCount === 3 && defenseCount === 3) {
-    room.phase = "battle";
+    room.phase = "open";
+    room.openInfo = createEmptyOpenInfo();
 
-    room.players.attack.hand = [...room.players.attack.placedCards];
-    room.players.defense.hand = [...room.players.defense.placedCards];
-
-    room.battleState = {
-      step: 1,
-      currentRole: "attack",
-      forcedFace: null,
-
-      attackHand: room.players.attack.hand.map(c => ({
-        value: c,
-        owner: "attack"
-      })),
-
-      defenseHand: room.players.defense.hand.map(c => ({
-        value: c,
-        owner: "defense"
-      })),
-
-      pointArea: Array(6).fill(null)
-    };
+    // open完了までbattleStateは作らない
+    room.battleState = null;
   }
 
   return res.json({
@@ -175,9 +231,90 @@ app.post("/api/placement/place/:roomId", (req, res) => {
       attackCards: room.players.attack.placedCards,
       defenseCards: room.players.defense.placedCards
     },
+    openInfo: room.openInfo,
     battleState: room.battleState
   });
 });
+
+/* =====================
+   openフェーズ
+===================== */
+app.post("/api/open/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) return res.status(404).json({ error: "Room not found" });
+
+  const { role, zeroCount, oneCount } = req.body;
+
+  if (room.phase !== "open") {
+    return res.status(400).json({ error: "Not open phase" });
+  }
+
+  if (role !== "defense") {
+    return res.status(400).json({ error: "Only defense can open" });
+  }
+
+  const z = Number(zeroCount);
+  const o = Number(oneCount);
+
+  if (!Number.isInteger(z) || !Number.isInteger(o)) {
+    return res.status(400).json({ error: "Invalid open counts" });
+  }
+
+  if (z < 0 || o < 0) {
+    return res.status(400).json({ error: "Invalid open counts" });
+  }
+
+  const total = z + o;
+
+  if (total > 3) {
+    return res.status(400).json({ error: "Too many open cards" });
+  }
+
+  const defenseCards = room.players.defense.placedCards;
+  const attackCards = room.players.attack.placedCards;
+
+  if (defenseCards.length !== 3 || attackCards.length !== 3) {
+    return res.status(400).json({ error: "Build not completed" });
+  }
+
+  const defenseCardCounts = countCards(defenseCards);
+
+  if (z > defenseCardCounts.zeroCount) {
+    return res.status(400).json({ error: "Too many zero cards opened" });
+  }
+
+  if (o > defenseCardCounts.oneCount) {
+    return res.status(400).json({ error: "Too many one cards opened" });
+  }
+
+  const scoutCount = Math.max(0, total - 1);
+  const attackScouted = makeScoutCounts(attackCards, scoutCount);
+
+  room.openInfo = {
+    completed: true,
+
+    defenseOpen: {
+      zeroCount: z,
+      oneCount: o,
+      total
+    },
+
+    attackScouted
+  };
+
+  // open完了 → battle開始
+  room.phase = "battle";
+  initializeBattleState(room);
+
+  return res.json({
+    success: true,
+    phase: room.phase,
+    openInfo: room.openInfo,
+    battleState: room.battleState
+  });
+});
+
+
 /* =====================
    Battle（step1〜6）
 ===================== */
@@ -512,10 +649,8 @@ app.post("/api/next-round/:roomId", (req, res) => {
     };
   }
 
-  // 押したプレイヤーをReadyにする
   room.nextRoundReady[role] = true;
 
-  // まだ両方Readyではない場合は待機
   if (!room.nextRoundReady.attack || !room.nextRoundReady.defense) {
     return res.json({
       success: true,
@@ -525,10 +660,6 @@ app.post("/api/next-round/:roomId", (req, res) => {
       nextRoundReady: room.nextRoundReady
     });
   }
-
-  // =====================
-  // 両方Ready → 2ラウンド目へ
-  // =====================
 
   room.round = 2;
 
@@ -542,12 +673,12 @@ app.post("/api/next-round/:roomId", (req, res) => {
   room.totalScore.attack = room.totalScore.defense;
   room.totalScore.defense = tempScore;
 
-  // ★ 最終二進数もプレイヤーに合わせて入替
+  // 最終二進数もプレイヤーに合わせて入替
   const tempBinary = room.finalBinary.attack;
   room.finalBinary.attack = room.finalBinary.defense;
   room.finalBinary.defense = tempBinary;
 
-  // placement用にリセット
+  // build用にリセット
   room.players.attack.placedCards = [];
   room.players.defense.placedCards = [];
 
@@ -555,6 +686,7 @@ app.post("/api/next-round/:roomId", (req, res) => {
   room.players.defense.hand = [];
 
   room.battleState = null;
+  room.openInfo = null;
   room.lastReplaceIndex = null;
   room.nextRoundReady = null;
   room.phase = "placement";
@@ -565,7 +697,8 @@ app.post("/api/next-round/:roomId", (req, res) => {
     phase: room.phase,
     round: room.round,
     totalScore: room.totalScore,
-    nextRoundReady: room.nextRoundReady
+    nextRoundReady: room.nextRoundReady,
+    openInfo: room.openInfo
   });
 });
 /* =====================
