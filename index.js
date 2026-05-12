@@ -243,7 +243,7 @@ app.post("/api/open/:roomId", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ error: "Room not found" });
 
-  const { role, zeroCount, oneCount } = req.body;
+  const { role, selectedIndexes } = req.body;
 
   if (room.phase !== "open") {
     return res.status(400).json({ error: "Not open phase" });
@@ -253,21 +253,12 @@ app.post("/api/open/:roomId", (req, res) => {
     return res.status(400).json({ error: "Only defense can open" });
   }
 
-  const z = Number(zeroCount);
-  const o = Number(oneCount);
-
-  if (!Number.isInteger(z) || !Number.isInteger(o)) {
-    return res.status(400).json({ error: "Invalid open counts" });
+  if (!Array.isArray(selectedIndexes)) {
+    return res.status(400).json({ error: "Invalid selected indexes" });
   }
 
-  if (z < 0 || o < 0) {
-    return res.status(400).json({ error: "Invalid open counts" });
-  }
-
-  const total = z + o;
-
-  if (total > 3) {
-    return res.status(400).json({ error: "Too many open cards" });
+  if (selectedIndexes.length > 3) {
+    return res.status(400).json({ error: "Too many selected cards" });
   }
 
   const defenseCards = room.players.defense.placedCards;
@@ -277,28 +268,39 @@ app.post("/api/open/:roomId", (req, res) => {
     return res.status(400).json({ error: "Build not completed" });
   }
 
-  const defenseCardCounts = countCards(defenseCards);
+  // indexの妥当性確認
+  const indexSet = new Set();
 
-  if (z > defenseCardCounts.zeroCount) {
-    return res.status(400).json({ error: "Too many zero cards opened" });
+  for (const rawIndex of selectedIndexes) {
+    const index = Number(rawIndex);
+
+    if (!Number.isInteger(index)) {
+      return res.status(400).json({ error: "Invalid selected index" });
+    }
+
+    if (index < 0 || index > 2) {
+      return res.status(400).json({ error: "Selected index out of range" });
+    }
+
+    if (indexSet.has(index)) {
+      return res.status(400).json({ error: "Duplicate selected index" });
+    }
+
+    indexSet.add(index);
   }
 
-  if (o > defenseCardCounts.oneCount) {
-    return res.status(400).json({ error: "Too many one cards opened" });
-  }
+  // selectedIndexesから実際のdefenseカードを取り出す
+  // ※このindex情報は保存しない
+  const selectedCards = [...indexSet].map(index => defenseCards[index]);
 
-  const scoutCount = Math.max(0, total - 1);
+  const defenseOpen = countCards(selectedCards);
+
+  const scoutCount = Math.max(0, defenseOpen.total - 1);
   const attackScouted = makeScoutCounts(attackCards, scoutCount);
 
   room.openInfo = {
     completed: true,
-
-    defenseOpen: {
-      zeroCount: z,
-      oneCount: o,
-      total
-    },
-
+    defenseOpen,
     attackScouted
   };
 
