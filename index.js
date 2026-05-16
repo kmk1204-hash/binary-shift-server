@@ -56,6 +56,128 @@ function cleanupRandomTickets() {
   }
 }
 
+function generateRoomId() {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+function generateTicketId() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
+function findWaitingTicketByClientId(clientId) {
+  if (!clientId) return null;
+
+  for (const ticketId of Object.keys(randomTickets)) {
+    const ticket = randomTickets[ticketId];
+
+    if (
+      ticket &&
+      !ticket.matched &&
+      ticket.clientId === clientId
+    ) {
+      return ticketId;
+    }
+  }
+
+  return null;
+}
+
+function createInitialRoom() {
+  return {
+    phase: "placement",
+    round: 1,
+
+    totalScore: {
+      attack: 0,
+      defense: 0
+    },
+
+    finalBinary: {
+      attack: null,
+      defense: null
+    },
+
+    players: {
+      attack: { placedCards: [], hand: [] },
+      defense: { placedCards: [], hand: [] }
+    },
+
+    battleState: null,
+    openInfo: null,
+    openReady: null,
+    lastReplaceIndex: null,
+    nextRoundReady: null
+  };
+}
+
+function createEmptyOpenInfo() {
+  return {
+    completed: false,
+
+    defenseOpen: {
+      zeroCount: 0,
+      oneCount: 0,
+      total: 0
+    },
+
+    attackScouted: {
+      zeroCount: 0,
+      oneCount: 0,
+      total: 0
+    }
+  };
+}
+
+function countCards(cards) {
+  return {
+    zeroCount: cards.filter(c => c === 0).length,
+    oneCount: cards.filter(c => c === 1).length,
+    total: cards.length
+  };
+}
+
+function makeScoutCounts(cards, scoutCount) {
+  const shuffled = [...cards];
+
+  // Fisher-Yates shuffle
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = temp;
+  }
+
+  const picked = shuffled.slice(0, scoutCount);
+
+  return {
+    zeroCount: picked.filter(v => v === 0).length,
+    oneCount: picked.filter(v => v === 1).length,
+    total: picked.length
+  };
+}
+
+function initializeBattleState(room) {
+  room.players.attack.hand = [...room.players.attack.placedCards];
+  room.players.defense.hand = [...room.players.defense.placedCards];
+
+  room.battleState = {
+    step: 1,
+    currentRole: "attack",
+    forcedFace: null,
+
+    attackHand: room.players.attack.hand.map(c => ({
+      value: c,
+      owner: "attack"
+    })),
+
+    defenseHand: room.players.defense.hand.map(c => ({
+      value: c,
+      owner: "defense"
+    })),
+
+    pointArea: Array(6).fill(null)
+  };
+}
 
 /* =====================
    ルーム作成
