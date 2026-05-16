@@ -22,129 +22,38 @@ function cleanupRandomTickets() {
       continue;
     }
 
-    // 未マッチのまま古くなったチケットを削除
+    // 未マッチのまま古くなったticketを削除
     if (!ticket.matched && now - ticket.createdAt > RANDOM_TICKET_TTL_MS) {
       delete randomTickets[ticketId];
 
       if (waitingRandomTicketId === ticketId) {
         waitingRandomTicketId = null;
       }
+
+      continue;
+    }
+
+    // マッチ済みticketも一定時間後に削除
+    if (
+      ticket.matched &&
+      ticket.matchedAt &&
+      now - ticket.matchedAt > RANDOM_TICKET_TTL_MS
+    ) {
+      delete randomTickets[ticketId];
+      continue;
     }
   }
 
   // waitingRandomTicketId が壊れていたらリセット
   if (
     waitingRandomTicketId &&
-    (!randomTickets[waitingRandomTicketId] ||
-      randomTickets[waitingRandomTicketId].matched)
+    (
+      !randomTickets[waitingRandomTicketId] ||
+      randomTickets[waitingRandomTicketId].matched
+    )
   ) {
     waitingRandomTicketId = null;
   }
-}
-
-function generateRoomId() {
-  return Math.random().toString(36).substring(2, 8);
-}
-
-function generateTicketId() {
-  return Math.random().toString(36).substring(2, 10);
-}
-
-function createInitialRoom() {
-  return {
-    phase: "placement",
-    round: 1,
-
-    totalScore: {
-      attack: 0,
-      defense: 0
-    },
-
-    finalBinary: {
-      attack: null,
-      defense: null
-    },
-
-    players: {
-      attack: { placedCards: [], hand: [] },
-      defense: { placedCards: [], hand: [] }
-    },
-
-    battleState: null,
-    openInfo: null,
-    openReady: null,
-    lastReplaceIndex: null,
-    nextRoundReady: null
-  };
-}
-
-function createEmptyOpenInfo() {
-  return {
-    completed: false,
-
-    defenseOpen: {
-      zeroCount: 0,
-      oneCount: 0,
-      total: 0
-    },
-
-    attackScouted: {
-      zeroCount: 0,
-      oneCount: 0,
-      total: 0
-    }
-  };
-}
-
-function countCards(cards) {
-  return {
-    zeroCount: cards.filter(c => c === 0).length,
-    oneCount: cards.filter(c => c === 1).length,
-    total: cards.length
-  };
-}
-
-function makeScoutCounts(cards, scoutCount) {
-  const shuffled = [...cards];
-
-  // Fisher-Yates shuffle
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const temp = shuffled[i];
-    shuffled[i] = shuffled[j];
-    shuffled[j] = temp;
-  }
-
-  const picked = shuffled.slice(0, scoutCount);
-
-  return {
-    zeroCount: picked.filter(v => v === 0).length,
-    oneCount: picked.filter(v => v === 1).length,
-    total: picked.length
-  };
-}
-
-function initializeBattleState(room) {
-  room.players.attack.hand = [...room.players.attack.placedCards];
-  room.players.defense.hand = [...room.players.defense.placedCards];
-
-  room.battleState = {
-    step: 1,
-    currentRole: "attack",
-    forcedFace: null,
-
-    attackHand: room.players.attack.hand.map(c => ({
-      value: c,
-      owner: "attack"
-    })),
-
-    defenseHand: room.players.defense.hand.map(c => ({
-      value: c,
-      owner: "defense"
-    })),
-
-    pointArea: Array(6).fill(null)
-  };
 }
 
 
@@ -177,17 +86,34 @@ app.get("/api/join-room/:roomId", (req, res) => {
 app.post("/api/random-match", (req, res) => {
   cleanupRandomTickets();
 
+  const { clientId } = req.body;
+
+  if (!clientId) {
+    return res.status(400).json({ error: "clientId is required" });
+  }
+
+  // 同じclientがすでに待機中なら、新しいticketを作らず既存ticketを返す
+  const existingWaitingTicketId = findWaitingTicketByClientId(clientId);
+
+  if (existingWaitingTicketId) {
+    return res.json({
+      matched: false,
+      ticketId: existingWaitingTicketId
+    });
+  }
+
   const ticketId = generateTicketId();
 
   randomTickets[ticketId] = {
     matched: false,
     roomId: null,
     role: null,
+    clientId,
     createdAt: Date.now()
   };
 
   // 待機者がいない場合：自分が待機
-  if (!waitingRandomTicketId) {
+  if (!waitingRandomTicketId || !randomTickets[waitingRandomTicketId]) {
     waitingRandomTicketId = ticketId;
 
     return res.json({
@@ -196,8 +122,19 @@ app.post("/api/random-match", (req, res) => {
     });
   }
 
-  // 念のため、待機チケットが壊れていた場合は自分を待機にする
-  if (!randomTickets[waitingRandomTicketId]) {
+  const firstTicketId = waitingRandomTicketId;
+  const firstTicket = randomTickets[firstTicketId];
+
+  // 待機者が自分自身ならマッチさせない
+  if (firstTicket && firstTicket.clientId === clientId) {
+    return res.json({
+      matched: false,
+      ticketId: firstTicketId
+    });
+  }
+
+  // 待機者が壊れていた場合
+  if (!firstTicket || firstTicket.matched) {
     waitingRandomTicketId = ticketId;
 
     return res.json({
@@ -207,7 +144,6 @@ app.post("/api/random-match", (req, res) => {
   }
 
   // 待機者がいる場合：マッチ成立
-  const firstTicketId = waitingRandomTicketId;
   const secondTicketId = ticketId;
 
   const roomId = generateRoomId();
