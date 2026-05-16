@@ -9,6 +9,39 @@ const rooms = {};
 let waitingRandomTicketId = null;
 const randomTickets = {};
 
+const RANDOM_TICKET_TTL_MS = 1000 * 60 * 3; // 3分
+
+function cleanupRandomTickets() {
+  const now = Date.now();
+
+  for (const ticketId of Object.keys(randomTickets)) {
+    const ticket = randomTickets[ticketId];
+
+    if (!ticket) {
+      delete randomTickets[ticketId];
+      continue;
+    }
+
+    // 未マッチのまま古くなったチケットを削除
+    if (!ticket.matched && now - ticket.createdAt > RANDOM_TICKET_TTL_MS) {
+      delete randomTickets[ticketId];
+
+      if (waitingRandomTicketId === ticketId) {
+        waitingRandomTicketId = null;
+      }
+    }
+  }
+
+  // waitingRandomTicketId が壊れていたらリセット
+  if (
+    waitingRandomTicketId &&
+    (!randomTickets[waitingRandomTicketId] ||
+      randomTickets[waitingRandomTicketId].matched)
+  ) {
+    waitingRandomTicketId = null;
+  }
+}
+
 function generateRoomId() {
   return Math.random().toString(36).substring(2, 8);
 }
@@ -114,9 +147,7 @@ function initializeBattleState(room) {
   };
 }
 
-/* =====================
-   ルーム作成
-===================== */
+
 /* =====================
    ルーム作成
 ===================== */
@@ -144,6 +175,8 @@ app.get("/api/join-room/:roomId", (req, res) => {
    ランダムマッチ開始
 ===================== */
 app.post("/api/random-match", (req, res) => {
+  cleanupRandomTickets();
+
   const ticketId = generateTicketId();
 
   randomTickets[ticketId] = {
@@ -154,7 +187,17 @@ app.post("/api/random-match", (req, res) => {
   };
 
   // 待機者がいない場合：自分が待機
-  if (!waitingRandomTicketId || !randomTickets[waitingRandomTicketId]) {
+  if (!waitingRandomTicketId) {
+    waitingRandomTicketId = ticketId;
+
+    return res.json({
+      matched: false,
+      ticketId
+    });
+  }
+
+  // 念のため、待機チケットが壊れていた場合は自分を待機にする
+  if (!randomTickets[waitingRandomTicketId]) {
     waitingRandomTicketId = ticketId;
 
     return res.json({
@@ -200,6 +243,8 @@ app.post("/api/random-match", (req, res) => {
    ランダムマッチ状態確認
 ===================== */
 app.get("/api/random-match/:ticketId", (req, res) => {
+  cleanupRandomTickets();
+  
   const ticket = randomTickets[req.params.ticketId];
 
   if (!ticket) {
@@ -225,13 +270,14 @@ app.get("/api/random-match/:ticketId", (req, res) => {
    ランダムマッチキャンセル
 ===================== */
 app.post("/api/random-match-cancel", (req, res) => {
+  cleanupRandomTickets();
+
   const { ticketId } = req.body;
 
   if (!ticketId || !randomTickets[ticketId]) {
     return res.json({ success: true });
   }
 
-  // 待機中の本人なら待機解除
   if (waitingRandomTicketId === ticketId) {
     waitingRandomTicketId = null;
   }
