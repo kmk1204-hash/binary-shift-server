@@ -6,6 +6,44 @@ app.use(cors());
 app.use(express.json());
 
 const rooms = {};
+let waitingRandomTicketId = null;
+const randomTickets = {};
+
+function generateRoomId() {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+function generateTicketId() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
+function createInitialRoom() {
+  return {
+    phase: "placement",
+    round: 1,
+
+    totalScore: {
+      attack: 0,
+      defense: 0
+    },
+
+    finalBinary: {
+      attack: null,
+      defense: null
+    },
+
+    players: {
+      attack: { placedCards: [], hand: [] },
+      defense: { placedCards: [], hand: [] }
+    },
+
+    battleState: null,
+    openInfo: null,
+    openReady: null,
+    lastReplaceIndex: null,
+    nextRoundReady: null
+  };
+}
 
 function createEmptyOpenInfo() {
   return {
@@ -79,38 +117,16 @@ function initializeBattleState(room) {
 /* =====================
    ルーム作成
 ===================== */
+/* =====================
+   ルーム作成
+===================== */
 app.get("/api/create-room", (req, res) => {
-  const roomId = Math.random().toString(36).substring(2, 8);
+  const roomId = generateRoomId();
 
-  rooms[roomId] = {
-    phase: "placement",
-    round: 1,
-
-    totalScore: {
-      attack: 0,
-      defense: 0
-    },
-
-    finalBinary: {
-      attack: null,
-      defense: null
-    },
-
-    players: {
-      attack: { placedCards: [], hand: [] },
-      defense: { placedCards: [], hand: [] }
-    },
-
-    battleState: null,
-    openInfo: null,
-    openReady: null,
-    lastReplaceIndex: null,
-    nextRoundReady: null
-  };
+  rooms[roomId] = createInitialRoom();
 
   res.json({ roomId });
 });
-
 /* =====================
    ルーム参加
 ===================== */
@@ -122,6 +138,107 @@ app.get("/api/join-room/:roomId", (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+/* =====================
+   ランダムマッチ開始
+===================== */
+app.post("/api/random-match", (req, res) => {
+  const ticketId = generateTicketId();
+
+  randomTickets[ticketId] = {
+    matched: false,
+    roomId: null,
+    role: null,
+    createdAt: Date.now()
+  };
+
+  // 待機者がいない場合：自分が待機
+  if (!waitingRandomTicketId || !randomTickets[waitingRandomTicketId]) {
+    waitingRandomTicketId = ticketId;
+
+    return res.json({
+      matched: false,
+      ticketId
+    });
+  }
+
+  // 待機者がいる場合：マッチ成立
+  const firstTicketId = waitingRandomTicketId;
+  const secondTicketId = ticketId;
+
+  const roomId = generateRoomId();
+  rooms[roomId] = createInitialRoom();
+
+  randomTickets[firstTicketId] = {
+    ...randomTickets[firstTicketId],
+    matched: true,
+    roomId,
+    role: "attack",
+    matchedAt: Date.now()
+  };
+
+  randomTickets[secondTicketId] = {
+    ...randomTickets[secondTicketId],
+    matched: true,
+    roomId,
+    role: "defense",
+    matchedAt: Date.now()
+  };
+
+  waitingRandomTicketId = null;
+
+  return res.json({
+    matched: true,
+    ticketId: secondTicketId,
+    roomId,
+    role: "defense"
+  });
+});
+
+/* =====================
+   ランダムマッチ状態確認
+===================== */
+app.get("/api/random-match/:ticketId", (req, res) => {
+  const ticket = randomTickets[req.params.ticketId];
+
+  if (!ticket) {
+    return res.status(404).json({ error: "Ticket not found" });
+  }
+
+  if (!ticket.matched) {
+    return res.json({
+      matched: false,
+      ticketId: req.params.ticketId
+    });
+  }
+
+  return res.json({
+    matched: true,
+    ticketId: req.params.ticketId,
+    roomId: ticket.roomId,
+    role: ticket.role
+  });
+});
+
+/* =====================
+   ランダムマッチキャンセル
+===================== */
+app.post("/api/random-match-cancel", (req, res) => {
+  const { ticketId } = req.body;
+
+  if (!ticketId || !randomTickets[ticketId]) {
+    return res.json({ success: true });
+  }
+
+  // 待機中の本人なら待機解除
+  if (waitingRandomTicketId === ticketId) {
+    waitingRandomTicketId = null;
+  }
+
+  delete randomTickets[ticketId];
+
+  return res.json({ success: true });
 });
 
 /* =====================
