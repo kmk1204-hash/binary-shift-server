@@ -106,7 +106,9 @@ function createInitialRoom() {
     openInfo: null,
     openReady: null,
     lastReplaceIndex: null,
-    nextRoundReady: null
+    nextRoundReady: null,
+    rematchReady: null
+};
   };
 }
 
@@ -383,7 +385,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
       openInfo: room.openInfo ?? null,
       openReady: room.openReady ?? null,
       lastReplaceIndex: room.lastReplaceIndex ?? null,
-      nextRoundReady: room.nextRoundReady ?? null
+      nextRoundReady: room.nextRoundReady ?? null,
+      rematchReady: room.rematchReady ?? null
     });
   }
 
@@ -396,7 +399,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
     openInfo: room.openInfo ?? null,
     openReady: room.openReady ?? null,
     lastReplaceIndex: room.lastReplaceIndex ?? null,
-    nextRoundReady: room.nextRoundReady ?? null
+    nextRoundReady: room.nextRoundReady ?? null,
+    rematchReady: room.rematchReady ?? null
   });
 });
 /* =====================
@@ -991,6 +995,101 @@ app.post("/api/next-round/:roomId", (req, res) => {
     openInfo: room.openInfo
   });
 });
+
+/* =====================
+   再戦
+===================== */
+app.post("/api/rematch/:roomId", (req, res) => {
+  const room = rooms[req.params.roomId];
+  const { role } = req.body;
+
+  if (!room) {
+    return res.status(404).json({
+      error: "Room not found"
+    });
+  }
+
+  if (room.phase !== "final_result") {
+    return res.status(400).json({
+      error: "Not final result phase"
+    });
+  }
+
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({
+      error: "Invalid role"
+    });
+  }
+
+  // 初回作成
+  if (!room.rematchReady) {
+    room.rematchReady = {
+      attack: false,
+      defense: false
+    };
+  }
+
+  room.rematchReady[role] = true;
+
+  // 相手待ち
+  if (
+    !room.rematchReady.attack ||
+    !room.rematchReady.defense
+  ) {
+    return res.json({
+      success: true,
+      waiting: true,
+      phase: room.phase,
+      rematchReady: room.rematchReady
+    });
+  }
+
+  /* =====================
+     両者再戦
+     完全リセット
+  ===================== */
+
+  room.round = 1;
+
+  room.totalScore = {
+    attack: 0,
+    defense: 0
+  };
+
+  room.finalBinary = {
+    attack: null,
+    defense: null
+  };
+
+  room.players.attack.placedCards = [];
+  room.players.attack.hand = [];
+
+  room.players.defense.placedCards = [];
+  room.players.defense.hand = [];
+
+  room.battleState = null;
+
+  room.openInfo = null;
+  room.openReady = null;
+
+  room.lastReplaceIndex = null;
+
+  room.nextRoundReady = null;
+
+  room.rematchReady = null;
+
+  room.phase = "placement";
+
+  return res.json({
+    success: true,
+    waiting: false,
+    phase: room.phase,
+    round: room.round,
+    totalScore: room.totalScore,
+    finalBinary: room.finalBinary
+  });
+});
+
 /* =====================
    起動
 ===================== */
