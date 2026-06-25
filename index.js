@@ -108,7 +108,6 @@ function createInitialRoom() {
     lastReplaceIndex: null,
     nextRoundReady: null,
     rematchReady: null
-};
   };
 }
 
