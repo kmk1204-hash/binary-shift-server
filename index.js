@@ -107,7 +107,11 @@ function createInitialRoom() {
     openReady: null,
     lastReplaceIndex: null,
     nextRoundReady: null,
-    rematchReady: null
+
+　　rematchState: {
+     attack: null,
+     defense: null
+　　}
   };
 }
 
@@ -385,7 +389,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
       openReady: room.openReady ?? null,
       lastReplaceIndex: room.lastReplaceIndex ?? null,
       nextRoundReady: room.nextRoundReady ?? null,
-      rematchReady: room.rematchReady ?? null
+      rematchState: room.rematchState
     });
   }
 
@@ -399,7 +403,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     openReady: room.openReady ?? null,
     lastReplaceIndex: room.lastReplaceIndex ?? null,
     nextRoundReady: room.nextRoundReady ?? null,
-    rematchReady: room.rematchReady ?? null
+    rematchState: room.rematchState
   });
 });
 /* =====================
@@ -908,6 +912,10 @@ function finalizeRound(room) {
     room.phase = "round_result";
   } else {
     room.nextRoundReady = null;
+    room.rematchState = {
+     attack: null,
+     defense: null
+    };
     room.phase = "final_result";
   }
 }
@@ -1087,6 +1095,135 @@ app.post("/api/rematch/:roomId", (req, res) => {
     totalScore: room.totalScore,
     finalBinary: room.finalBinary
   });
+});
+
+/* =====================
+   Result選択
+===================== */
+app.post("/api/match-end-choice/:roomId", (req, res) => {
+
+  const room = rooms[req.params.roomId];
+
+  if (!room) {
+    return res.status(404).json({
+      error: "Room not found"
+    });
+  }
+
+  if (room.phase !== "final_result") {
+    return res.status(400).json({
+      error: "Not final result phase"
+    });
+  }
+
+  const { role, action } = req.body;
+
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({
+      error: "Invalid role"
+    });
+  }
+
+  if (action !== "rematch" && action !== "exit") {
+    return res.status(400).json({
+      error: "Invalid action"
+    });
+  }
+
+  if (!room.rematchState) {
+    room.rematchState = {
+      attack: null,
+      defense: null
+    };
+  }
+
+  room.rematchState[role] = action;
+
+  const attack = room.rematchState.attack;
+  const defense = room.rematchState.defense;
+
+  /* =====================
+     終了
+  ===================== */
+
+  if (attack === "exit" || defense === "exit") {
+
+    room.phase = "closed";
+
+    return res.json({
+      success: true,
+      phase: room.phase,
+      rematchState: room.rematchState
+    });
+
+  }
+
+  /* =====================
+     両者再戦
+  ===================== */
+
+  if (
+    attack === "rematch" &&
+    defense === "rematch"
+  ) {
+
+    room.round = 1;
+
+    room.totalScore = {
+      attack: 0,
+      defense: 0
+    };
+
+    room.finalBinary = {
+      attack: null,
+      defense: null
+    };
+
+    // 攻守交代
+    const tmp = room.players.attack;
+    room.players.attack = room.players.defense;
+    room.players.defense = tmp;
+
+    room.players.attack.placedCards = [];
+    room.players.attack.hand = [];
+
+    room.players.defense.placedCards = [];
+    room.players.defense.hand = [];
+
+    room.battleState = null;
+
+    room.openInfo = null;
+    room.openReady = null;
+
+    room.lastReplaceIndex = null;
+
+    room.nextRoundReady = null;
+
+    room.rematchState = {
+      attack: null,
+      defense: null
+    };
+
+    room.phase = "placement";
+
+    return res.json({
+      success: true,
+      phase: room.phase,
+      rematchState: room.rematchState
+    });
+
+  }
+
+  /* =====================
+     相手待ち
+  ===================== */
+
+  return res.json({
+    success: true,
+    phase: room.phase,
+    rematchState: room.rematchState
+  });
+
 });
 
 /* =====================
