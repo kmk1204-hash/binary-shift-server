@@ -232,6 +232,7 @@ function makeScoutCounts(cards, scoutCount) {
 }
 
 function initializeBattleState(room) {
+
   const attackPlayer =
     getCurrentPlayer(room, "attack");
 
@@ -246,20 +247,20 @@ function initializeBattleState(room) {
     currentRole: "attack",
     forcedFace: null,
 
-    attackPlayer.hand: room.players.attack.hand.map(c => ({
+    attackHand: attackPlayer.hand.map(c => ({
       value: c,
       owner: "attack"
     })),
 
-    defensePlayer.hand: room.players.defense.hand.map(c => ({
+    defenseHand: defensePlayer.hand.map(c => ({
       value: c,
       owner: "defense"
     })),
 
     pointArea: Array(6).fill(null)
   };
-}
 
+}
 /* =====================
    ルーム作成
 ===================== */
