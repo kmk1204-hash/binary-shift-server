@@ -508,6 +508,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     return res.json({
 
       phase: room.phase,
+      roles: room.roles,
 
       result: {
         attackScore,
@@ -544,6 +545,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
   return res.json({
 
     phase: room.phase,
+
+    roles: room.roles,
 
     battleState: room.battleState,
 
