@@ -1192,11 +1192,13 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
 
   // 二重送信防止
   if (room.rematchState[role] !== null) {
+
     return res.json({
       success: true,
       phase: room.phase,
       rematchState: room.rematchState
     });
+
   }
 
   room.rematchState[role] = action;
@@ -1213,48 +1215,13 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
     defenseChoice === "rematch"
   ) {
 
-    // ---------- 攻守入替 ----------
-
+    // 攻守交代
     const tmp = room.players.attack;
-
     room.players.attack = room.players.defense;
     room.players.defense = tmp;
 
-    // ---------- ラウンド初期化 ----------
-
-    room.round = 1;
-
-    room.totalScore = {
-      attack: 0,
-      defense: 0
-    };
-
-    room.finalBinary = {
-      attack: null,
-      defense: null
-    };
-
-    room.players.attack.hand = [];
-    room.players.attack.placedCards = [];
-
-    room.players.defense.hand = [];
-    room.players.defense.placedCards = [];
-
-    room.openInfo = null;
-    room.openReady = null;
-
-    room.battleState = null;
-
-    room.lastReplaceIndex = null;
-
-    room.nextRoundReady = null;
-
-    room.rematchState = {
-      attack: null,
-      defense: null
-    };
-
-    room.phase = "placement";
+    // 完全リセット
+    resetRoomForRematch(room);
 
     return res.json({
       success: true,
@@ -1265,7 +1232,26 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
   }
 
   /* =====================
-     片方終了
+     誰かが終了
+  ===================== */
+
+  if (
+    attackChoice === "exit" ||
+    defenseChoice === "exit"
+  ) {
+
+    room.phase = "closed";
+
+    return res.json({
+      success: true,
+      phase: room.phase,
+      rematchState: room.rematchState
+    });
+
+  }
+
+  /* =====================
+     相手待ち
   ===================== */
 
   return res.json({
