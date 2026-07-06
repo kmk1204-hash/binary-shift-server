@@ -83,9 +83,31 @@ function findWaitingTicketByClientId(clientId) {
 }
 
 function createInitialRoom() {
+
   return {
+
     phase: "placement",
+
     round: 1,
+
+    players: {
+
+      attack: {
+        hand: [],
+        placedCards: []
+      },
+
+      defense: {
+        hand: [],
+        placedCards: []
+      }
+
+    },
+
+    roles: {
+      attack: "attack",
+      defense: "defense"
+    },
 
     totalScore: {
       attack: 0,
@@ -95,21 +117,6 @@ function createInitialRoom() {
     finalBinary: {
       attack: null,
       defense: null
-    },
-
-    players: {
-      attack: {
-        placedCards: [],
-        hand: []
-      },
-      defense: {
-        placedCards: [],
-        hand: []
-      }
-    },
-    roles: {
-       attack: "attack",
-       defense: "defense"
     },
 
     battleState: null,
@@ -125,11 +132,17 @@ function createInitialRoom() {
       attack: null,
       defense: null
     }
+
   };
+
 }
 
 function getRolePlayer(room, role) {
-  return room.players[room.roles[role]];
+
+  return room.players[
+    room.roles[role]
+  ];
+
 }
 
 function swapRoles(room) {
@@ -143,11 +156,11 @@ function swapRoles(room) {
 
 function resetRoomForBuild(room) {
 
-  room.players.attack.placedCards = [];
   room.players.attack.hand = [];
+  room.players.attack.placedCards = [];
 
-  room.players.defense.placedCards = [];
   room.players.defense.hand = [];
+  room.players.defense.placedCards = [];
 
   room.battleState = null;
 
@@ -175,6 +188,9 @@ function resetRoomForRematch(room) {
     attack: null,
     defense: null
   };
+
+  room.roles.attack = "attack";
+  room.roles.defense = "defense";
 
   resetRoomForBuild(room);
 
