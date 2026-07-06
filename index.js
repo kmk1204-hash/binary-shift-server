@@ -1048,22 +1048,27 @@ app.post("/api/replace/:roomId", (req, res) => {
    ラウンド終了
 ===================== */
 function finalizeRound(room) {
+
   const bs = room.battleState;
 
   const binary = bs.pointArea.map(p => p.card).join("");
   const score = parseInt(binary, 2);
 
+  /* =====================
+     スコア保存
+  ===================== */
+
   if (room.round === 1) {
 
-  　room.totalScore.attack += score;
- 　 room.finalBinary.attack = binary;
+    room.totalScore.attack += score;
+    room.finalBinary.attack = binary;
 
-　} else {
+  } else {
 
- 　 room.totalScore.defense += score;
-  　room.finalBinary.defense = binary;
+    room.totalScore.defense += score;
+    room.finalBinary.defense = binary;
 
-　}
+  }
 
   bs.finalBinary = binary;
   bs.finalScore = score;
@@ -1071,21 +1076,32 @@ function finalizeRound(room) {
 
   room.lastReplaceIndex = null;
 
+  /* =====================
+     ラウンド終了
+  ===================== */
+
   if (room.round === 1) {
+
     room.nextRoundReady = {
       attack: false,
       defense: false
     };
 
     room.phase = "round_result";
+
   } else {
+
     room.nextRoundReady = null;
+
     room.rematchState = {
-     attack: null,
-     defense: null
+      attack: null,
+      defense: null
     };
+
     room.phase = "final_result";
+
   }
+
 }
 /* =====================
    次ラウンド
