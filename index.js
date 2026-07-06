@@ -232,20 +232,26 @@ function makeScoutCounts(cards, scoutCount) {
 }
 
 function initializeBattleState(room) {
-  room.players.attack.hand = [...room.players.attack.placedCards];
-  room.players.defense.hand = [...room.players.defense.placedCards];
+  const attackPlayer =
+    getCurrentPlayer(room, "attack");
+
+  const defensePlayer =
+    getCurrentPlayer(room, "defense");
+
+  attackPlayer.hand = [...attackPlayer.placedCards];
+  defensePlayer.hand = [...defensePlayer.placedCards];
 
   room.battleState = {
     step: 1,
     currentRole: "attack",
     forcedFace: null,
 
-    attackHand: room.players.attack.hand.map(c => ({
+    attackPlayer.hand: room.players.attack.hand.map(c => ({
       value: c,
       owner: "attack"
     })),
 
-    defenseHand: room.players.defense.hand.map(c => ({
+    defensePlayer.hand: room.players.defense.hand.map(c => ({
       value: c,
       owner: "defense"
     })),
@@ -526,6 +532,21 @@ app.get("/api/room-state/:roomId", (req, res) => {
   });
 
 });
+
+function getCurrentPlayer(room, role){
+
+    if(room.round===1){
+
+        return room.players[role];
+
+    }
+
+    return role==="attack"
+        ? room.players.defense
+        : room.players.attack;
+
+}
+
 /* =====================
    配置フェーズ
    ※ 実質 build：3枚のカード選択
@@ -548,7 +569,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     return res.status(400).json({ error: "Invalid card" });
   }
 
-  const player = room.players[role];
+  const player = getCurrentPlayer(room, role);
   if (!player) {
     return res.status(400).json({ error: "Player not found" });
   }
@@ -559,8 +580,11 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 
   player.placedCards.push(card);
 
-  const attackCount = room.players.attack.placedCards.length;
-  const defenseCount = room.players.defense.placedCards.length;
+  const attackPlayer = getCurrentPlayer(room, "attack");
+  const defensePlayer = getCurrentPlayer(room, "defense");
+
+  const attackCount = attackPlayer.placedCards.length;
+  const defenseCount = defensePlayer.placedCards.length;
 
   /* ===== build完了 → openへ ===== */
   if (attackCount === 3 && defenseCount === 3) {
@@ -579,8 +603,8 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     placementInfo: {
       attackCount,
       defenseCount,
-      attackCards: room.players.attack.placedCards,
-      defenseCards: room.players.defense.placedCards
+      attackCards: attackPlayer.placedCards,
+      defenseCards: defensePlayer.placedCards
     },
     openInfo: room.openInfo,
     battleState: room.battleState
@@ -616,8 +640,11 @@ app.post("/api/open/:roomId", (req, res) => {
     return res.status(400).json({ error: "Too many selected cards" });
   }
 
-  const defenseCards = room.players.defense.placedCards;
-  const attackCards = room.players.attack.placedCards;
+  const defenseCards =
+    getCurrentPlayer(room, "defense").placedCards;
+
+  const attackCards =
+    getCurrentPlayer(room, "attack").placedCards;
 
   if (defenseCards.length !== 3 || attackCards.length !== 3) {
     return res.status(400).json({ error: "Build not completed" });
@@ -1011,11 +1038,17 @@ function finalizeRound(room) {
   const binary = bs.pointArea.map(p => p.card).join("");
   const score = parseInt(binary, 2);
 
-  // 現在のattackプレイヤーにスコア加算
-  room.totalScore.attack += score;
+  if (room.round === 1) {
 
-  // 現在のattackプレイヤーの最終二進数を保存
-  room.finalBinary.attack = binary;
+  　room.totalScore.attack += score;
+ 　 room.finalBinary.attack = binary;
+
+　} else {
+
+ 　 room.totalScore.defense += score;
+  　room.finalBinary.defense = binary;
+
+　}
 
   bs.finalBinary = binary;
   bs.finalScore = score;
@@ -1099,11 +1132,6 @@ app.post("/api/next-round/:roomId", (req, res) => {
 
   room.round = 2;
 
-  // 攻守交代
-  const tmp = room.players.attack;
-  room.players.attack = room.players.defense;
-  room.players.defense = tmp;
-
   // Build開始用リセット
   resetRoomForBuild(room);
 
@@ -1116,99 +1144,6 @@ app.post("/api/next-round/:roomId", (req, res) => {
 
 });
 
-/* =====================
-   再戦
-===================== */
-app.post("/api/rematch/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  const { role } = req.body;
-
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
-    });
-  }
-
-  if (room.phase !== "final_result") {
-    return res.status(400).json({
-      error: "Not final result phase"
-    });
-  }
-
-  if (role !== "attack" && role !== "defense") {
-    return res.status(400).json({
-      error: "Invalid role"
-    });
-  }
-
-  // 初回作成
-  if (!room.rematchReady) {
-    room.rematchReady = {
-      attack: false,
-      defense: false
-    };
-  }
-
-  room.rematchReady[role] = true;
-
-  // 相手待ち
-  if (
-    !room.rematchReady.attack ||
-    !room.rematchReady.defense
-  ) {
-    return res.json({
-      success: true,
-      waiting: true,
-      phase: room.phase,
-      rematchReady: room.rematchReady
-    });
-  }
-
-  /* =====================
-     両者再戦
-     完全リセット
-  ===================== */
-
-  room.round = 1;
-
-  room.totalScore = {
-    attack: 0,
-    defense: 0
-  };
-
-  room.finalBinary = {
-    attack: null,
-    defense: null
-  };
-
-  room.players.attack.placedCards = [];
-  room.players.attack.hand = [];
-
-  room.players.defense.placedCards = [];
-  room.players.defense.hand = [];
-
-  room.battleState = null;
-
-  room.openInfo = null;
-  room.openReady = null;
-
-  room.lastReplaceIndex = null;
-
-  room.nextRoundReady = null;
-
-  room.rematchReady = null;
-
-  room.phase = "placement";
-
-  return res.json({
-    success: true,
-    waiting: false,
-    phase: room.phase,
-    round: room.round,
-    totalScore: room.totalScore,
-    finalBinary: room.finalBinary
-  });
-});
 
 /* =====================
    Match End Choice
@@ -1282,10 +1217,6 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
     defenseChoice === "rematch"
   ) {
 
-    // 攻守交代
-    const tmp = room.players.attack;
-    room.players.attack = room.players.defense;
-    room.players.defense = tmp;
 
     // 完全リセット
     resetRoomForRematch(room);
