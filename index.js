@@ -407,8 +407,14 @@ app.post("/api/random-match-cancel", (req, res) => {
    状態取得
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
+
   const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+
+  if (!room) {
+    return res.status(404).json({
+      error: "Room not found"
+    });
+  }
 
   const placementInfo = {
     attackCount: room.players.attack.placedCards.length,
@@ -417,16 +423,31 @@ app.get("/api/room-state/:roomId", (req, res) => {
     defenseCards: room.players.defense.placedCards
   };
 
+  // 再戦・終了選択状況
+  const matchEnd = {
+    attack: room.rematchState?.attack ?? null,
+    defense: room.rematchState?.defense ?? null
+  };
+
   if (room.phase === "final_result") {
+
     const attackScore = room.totalScore.attack;
     const defenseScore = room.totalScore.defense;
 
     let winner = "draw";
-    if (attackScore > defenseScore) winner = "attack";
-    if (defenseScore > attackScore) winner = "defense";
+
+    if (attackScore > defenseScore) {
+      winner = "attack";
+    }
+
+    if (defenseScore > attackScore) {
+      winner = "defense";
+    }
 
     return res.json({
+
       phase: room.phase,
+
       result: {
         attackScore,
         defenseScore,
@@ -434,30 +455,59 @@ app.get("/api/room-state/:roomId", (req, res) => {
         defenseBinary: room.finalBinary.defense,
         winner
       },
+
       round: room.round,
+
       totalScore: room.totalScore,
+
       finalBinary: room.finalBinary,
+
       placementInfo,
+
       openInfo: room.openInfo ?? null,
+
       openReady: room.openReady ?? null,
+
       lastReplaceIndex: room.lastReplaceIndex ?? null,
+
       nextRoundReady: room.nextRoundReady ?? null,
-      rematchState: room.rematchState
+
+      rematchState: room.rematchState,
+
+      // ★追加
+      matchEnd
+
     });
+
   }
 
   return res.json({
+
     phase: room.phase,
+
     battleState: room.battleState,
+
     round: room.round,
+
     totalScore: room.totalScore,
+
     placementInfo,
+
     openInfo: room.openInfo ?? null,
+
     openReady: room.openReady ?? null,
+
     lastReplaceIndex: room.lastReplaceIndex ?? null,
+
     nextRoundReady: room.nextRoundReady ?? null,
-    rematchState: room.rematchState
+
+    rematchState: room.rematchState,
+
+    // ★追加
+    matchEnd
+
   });
+
 });
 /* =====================
    配置フェーズ
@@ -1240,7 +1290,6 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
     defenseChoice === "exit"
   ) {
 
-    room.phase = "closed";
 
     return res.json({
       success: true,
