@@ -774,15 +774,25 @@ app.post("/api/attack/place/:roomId", (req, res) => {
 
   const reverseFace = f => (f === "表" ? "伏せ" : "表");
 
-  const place = (card, owner, faceValue, pos) => {
-    if (bs.pointArea[pos]) throw new Error("Position filled");
+  const place = (
+    card,
+    owner,
+    faceValue,
+    pos,
+    placedBy = bs.currentRole
+  ) => {
+
+    if (bs.pointArea[pos]) {
+      throw new Error("Position filled");
+    }
 
     bs.pointArea[pos] = {
       card,
       owner,
       face: faceValue,
-      placedBy: bs.currentRole
+      placedBy
     };
+
   };
 
   try {
@@ -878,13 +888,17 @@ app.post("/api/attack/place/:roomId", (req, res) => {
       // ===== 自動配置（旧step6） =====
       const lastCard = bs.attackHand[0] || bs.defenseHand[0];
       if (!lastCard) throw new Error("No card");
-
-      const owner = bs.attackHand.length ? "attack" : "defense";
+      const owner = lastCard.owner;
       const pos = bs.pointArea.findIndex(p => !p);
       if (pos === -1) throw new Error("No empty position");
 
-      place(lastCard.value, owner, "表", pos);
-
+      place(
+        lastCard.value,
+        owner,
+        "表",
+        pos,
+        "defense"
+      );
       // 手札クリア
       bs.attackHand = [];
       bs.defenseHand = [];
