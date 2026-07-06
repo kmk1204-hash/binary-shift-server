@@ -107,6 +107,10 @@ function createInitialRoom() {
         hand: []
       }
     },
+    roles: {
+       attack: "attack",
+       defense: "defense"
+    },
 
     battleState: null,
 
@@ -122,6 +126,19 @@ function createInitialRoom() {
       defense: null
     }
   };
+}
+
+function getRolePlayer(room, role) {
+  return room.players[room.roles[role]];
+}
+
+function swapRoles(room) {
+
+  const tmp = room.roles.attack;
+
+  room.roles.attack = room.roles.defense;
+  room.roles.defense = tmp;
+
 }
 
 function resetRoomForBuild(room) {
