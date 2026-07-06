@@ -976,23 +976,19 @@ function finalizeRound(room) {
    次ラウンド
 ===================== */
 app.post("/api/next-round/:roomId", (req, res) => {
+
   const room = rooms[req.params.roomId];
-  const { role } = req.body;
 
   if (!room) {
-    return res.status(404).json({ error: "Room not found" });
+    return res.status(404).json({
+      error: "Room not found"
+    });
   }
 
   if (room.phase !== "round_result") {
-    return res.status(400).json({ error: "Invalid phase" });
-  }
-
-  if (room.round !== 1) {
-    return res.status(400).json({ error: "Invalid round" });
-  }
-
-  if (role !== "attack" && role !== "defense") {
-    return res.status(400).json({ error: "Invalid role" });
+    return res.status(400).json({
+      error: "Not round_result"
+    });
   }
 
   if (!room.nextRoundReady) {
@@ -1002,58 +998,55 @@ app.post("/api/next-round/:roomId", (req, res) => {
     };
   }
 
+  const { role } = req.body;
+
+  if (
+    role !== "attack" &&
+    role !== "defense"
+  ) {
+    return res.status(400).json({
+      error: "Invalid role"
+    });
+  }
+
   room.nextRoundReady[role] = true;
 
-  if (!room.nextRoundReady.attack || !room.nextRoundReady.defense) {
+  // 相手待ち
+  if (
+    !room.nextRoundReady.attack ||
+    !room.nextRoundReady.defense
+  ) {
+
     return res.json({
       success: true,
       waiting: true,
       phase: room.phase,
-      round: room.round,
       nextRoundReady: room.nextRoundReady
     });
+
   }
+
+  /* =====================
+     両者準備完了
+  ===================== */
 
   room.round = 2;
 
-  // 攻守入替
-  const tempPlayer = room.players.attack;
+  // 攻守交代
+  const tmp = room.players.attack;
   room.players.attack = room.players.defense;
-  room.players.defense = tempPlayer;
+  room.players.defense = tmp;
 
-  // スコアもプレイヤーに合わせて入替
-  const tempScore = room.totalScore.attack;
-  room.totalScore.attack = room.totalScore.defense;
-  room.totalScore.defense = tempScore;
-
-  // 最終二進数もプレイヤーに合わせて入替
-  const tempBinary = room.finalBinary.attack;
-  room.finalBinary.attack = room.finalBinary.defense;
-  room.finalBinary.defense = tempBinary;
-
-  // build用にリセット
-  room.players.attack.placedCards = [];
-  room.players.defense.placedCards = [];
-
-  room.players.attack.hand = [];
-  room.players.defense.hand = [];
-
-  room.battleState = null;
-  room.openInfo = null;
-  room.openReady = null;
-  room.lastReplaceIndex = null;
-  room.nextRoundReady = null;
-  room.phase = "placement";
+  // Build開始用リセット
+  resetRoomForBuild(room);
 
   return res.json({
     success: true,
     waiting: false,
     phase: room.phase,
-    round: room.round,
-    totalScore: room.totalScore,
-    nextRoundReady: room.nextRoundReady,
-    openInfo: room.openInfo
+    round: room.round
   });
+
 });
 
 /* =====================
