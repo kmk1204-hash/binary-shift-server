@@ -98,21 +98,74 @@ function createInitialRoom() {
     },
 
     players: {
-      attack: { placedCards: [], hand: [] },
-      defense: { placedCards: [], hand: [] }
+      attack: {
+        placedCards: [],
+        hand: []
+      },
+      defense: {
+        placedCards: [],
+        hand: []
+      }
     },
 
     battleState: null,
+
     openInfo: null,
     openReady: null,
+
     lastReplaceIndex: null,
+
     nextRoundReady: null,
 
-　　rematchState: {
-     attack: null,
-     defense: null
-　　}
+    rematchState: {
+      attack: null,
+      defense: null
+    }
   };
+}
+
+function resetRoomForBuild(room) {
+
+  room.players.attack.placedCards = [];
+  room.players.attack.hand = [];
+
+  room.players.defense.placedCards = [];
+  room.players.defense.hand = [];
+
+  room.battleState = null;
+
+  room.openInfo = null;
+  room.openReady = null;
+
+  room.lastReplaceIndex = null;
+
+  room.nextRoundReady = null;
+
+  room.phase = "placement";
+
+}
+
+function resetRoomForRematch(room) {
+
+  room.round = 1;
+
+  room.totalScore = {
+    attack: 0,
+    defense: 0
+  };
+
+  room.finalBinary = {
+    attack: null,
+    defense: null
+  };
+
+  resetRoomForBuild(room);
+
+  room.rematchState = {
+    attack: null,
+    defense: null
+  };
+
 }
 
 function createEmptyOpenInfo() {
