@@ -11,6 +11,8 @@ const randomTickets = {};
 
 const RANDOM_TICKET_TTL_MS = 1000 * 60 * 3; // 3分
 
+const ROOM_TTL_MS = 5 * 60 * 1000;
+
 function cleanupRandomTickets() {
   const now = Date.now();
 
@@ -56,6 +58,52 @@ function cleanupRandomTickets() {
   }
 }
 
+/* =====================
+   Room掃除
+===================== */
+
+function cleanupRooms() {
+
+  const now = Date.now();
+
+  for (const roomId in rooms) {
+
+    const room = rooms[roomId];
+
+    if (!room) {
+      continue;
+    }
+
+    // 両者離脱済みならTTLを待たず削除
+    if (
+      room.leaveState &&
+      room.leaveState.attack &&
+      room.leaveState.defense
+    ) {
+
+      delete rooms[roomId];
+      continue;
+
+    }
+
+    // 一定時間アクセスがないRoomを削除
+    if (
+      now - room.lastAccess >
+      ROOM_TTL_MS
+    ) {
+
+      console.log(
+        `Room expired: ${roomId}`
+      );
+
+      delete rooms[roomId];
+
+    }
+
+  }
+
+}
+
 function generateRoomId() {
   return Math.random().toString(36).substring(2, 8);
 }
@@ -91,6 +139,8 @@ function createInitialRoom() {
     phase: "placement",
 
     round: 1,
+
+    lastAccess: Date.now(),
 
     leaveState: {
       attack: false,
@@ -319,6 +369,8 @@ app.get("/api/join-room/:roomId", (req, res) => {
 ===================== */
 app.post("/api/leave-room/:roomId", (req, res) => {
 
+  cleanupRooms();
+
   const room = rooms[req.params.roomId];
 
   if (!room) {
@@ -368,6 +420,7 @@ app.post("/api/leave-room/:roomId", (req, res) => {
 ===================== */
 app.post("/api/random-match", (req, res) => {
   cleanupRandomTickets();
+  cleanupRooms();
 
   const { clientId } = req.body;
 
@@ -463,6 +516,7 @@ app.post("/api/random-match", (req, res) => {
 ===================== */
 app.get("/api/random-match/:ticketId", (req, res) => {
   cleanupRandomTickets();
+  cleanupRooms();
   
   const ticket = randomTickets[req.params.ticketId];
 
@@ -490,6 +544,7 @@ app.get("/api/random-match/:ticketId", (req, res) => {
 ===================== */
 app.post("/api/random-match-cancel", (req, res) => {
   cleanupRandomTickets();
+  cleanupRooms();
 
   const { ticketId } = req.body;
 
@@ -511,6 +566,8 @@ app.post("/api/random-match-cancel", (req, res) => {
 ===================== */
 app.get("/api/room-state/:roomId", (req, res) => {
 
+  cleanupRooms();
+
   const room = rooms[req.params.roomId];
 
   if (!room) {
@@ -518,6 +575,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
       error: "Room not found"
     });
   }
+
+  room.lastAccess = Date.now();
 
   /* =====================
      現在の攻守プレイヤー取得
