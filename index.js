@@ -545,7 +545,7 @@ app.post("/api/random-match", (req, res) => {
     matched: true,
     roomId,
     role: "attack",
-    matchedAt: Date.now),
+    matchedAt: Date.now(),
     playerId: attackPlayerId
   };
 
@@ -554,7 +554,7 @@ app.post("/api/random-match", (req, res) => {
     matched: true,
     roomId,
     role: "defense",
-    matchedAt: Date.now),
+    matchedAt: Date.now(),
     playerId: defensePlayerId
   };
 
