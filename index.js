@@ -86,9 +86,16 @@ function createInitialRoom() {
 
   return {
 
+    type,
+
     phase: "placement",
 
     round: 1,
+
+    leaveState: {
+      attack: false,
+      defense: false
+    },
 
     players: {
 
@@ -196,6 +203,11 @@ function resetRoomForRematch(room) {
     defense: null
   };
 
+  room.leaveState = {
+    attack: false,
+    defense: false
+  };
+
 }
 
 function createEmptyOpenInfo() {
@@ -285,7 +297,7 @@ function initializeBattleState(room) {
 app.get("/api/create-room", (req, res) => {
   const roomId = generateRoomId();
 
-  rooms[roomId] = createInitialRoom();
+  rooms[roomId] = createInitialRoom("manual");
 
   res.json({ roomId });
 });
@@ -369,7 +381,7 @@ app.post("/api/random-match", (req, res) => {
   const secondTicketId = ticketId;
 
   const roomId = generateRoomId();
-  rooms[roomId] = createInitialRoom();
+  rooms[roomId] = createInitialRoom("random");
 
   randomTickets[firstTicketId] = {
     ...randomTickets[firstTicketId],
@@ -543,6 +555,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
   }
 
   return res.json({
+
+    type: room.type,
 
     phase: room.phase,
 
