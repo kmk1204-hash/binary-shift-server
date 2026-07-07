@@ -315,6 +315,55 @@ app.get("/api/join-room/:roomId", (req, res) => {
 });
 
 /* =====================
+   Room離脱
+===================== */
+app.post("/api/leave-room/:roomId", (req, res) => {
+
+  const room = rooms[req.params.roomId];
+
+  if (!room) {
+    return res.json({ success: true });
+  }
+
+  const { role } = req.body;
+
+  if (role !== "attack" && role !== "defense") {
+    return res.status(400).json({
+      error: "Invalid role"
+    });
+  }
+
+  room.leaveState[role] = true;
+
+  /* =====================
+     両者離脱
+  ===================== */
+
+  if (
+    room.leaveState.attack &&
+    room.leaveState.defense
+  ) {
+
+    // 今後ここでポイント付与
+    // if (room.type === "random") { ... }
+
+    delete rooms[req.params.roomId];
+
+    return res.json({
+      success: true,
+      deleted: true
+    });
+
+  }
+
+  return res.json({
+    success: true,
+    deleted: false
+  });
+
+});
+
+/* =====================
    ランダムマッチ開始
 ===================== */
 app.post("/api/random-match", (req, res) => {
