@@ -135,7 +135,7 @@ function findWaitingTicketByClientId(clientId) {
   return null;
 }
 
-function createInitialRoom( type = "manual") {
+function createInitialRoom(type = "manual") {
 
   return {
 
@@ -166,9 +166,25 @@ function createInitialRoom( type = "manual") {
 
     },
 
+    // ゲーム進行用
     roles: {
-      attack: generatePlayerId(),
-      defense: generatePlayerId()
+      attack: "attack",
+      defense: "defense"
+    },
+
+    // プレイヤー情報
+    participants: {
+
+      attack: {
+        playerId: null,
+        accountId: null
+      },
+
+      defense: {
+        playerId: null,
+        accountId: null
+      }
+
     },
 
     totalScore: {
@@ -200,11 +216,7 @@ function createInitialRoom( type = "manual") {
 }
 
 function getRolePlayer(room, role) {
-
-  return room.players[
-    room.roles[role]
-  ];
-
+  return room.players[role];
 }
 
 function swapRoles(room) {
@@ -350,23 +362,51 @@ function initializeBattleState(room) {
    ルーム作成
 ===================== */
 app.get("/api/create-room", (req, res) => {
+
   const roomId = generateRoomId();
 
-  rooms[roomId] = createInitialRoom("manual");
+  const room = createInitialRoom("manual");
 
-  res.json({ roomId });
+  const playerId = generatePlayerId();
+
+  room.participants.attack.playerId = playerId;
+
+  rooms[roomId] = room;
+
+  res.json({
+    roomId,
+    playerId
+  });
+
 });
 /* =====================
    ルーム参加
 ===================== */
 app.get("/api/join-room/:roomId", (req, res) => {
+
   const room = rooms[req.params.roomId];
 
   if (!room) {
-    return res.status(404).json({ error: "Room not found" });
+    return res.status(404).json({
+      error: "Room not found"
+    });
   }
 
-  res.json({ success: true });
+  if (room.participants.defense.playerId !== null) {
+    return res.status(400).json({
+      error: "Room is full"
+    });
+  }
+
+  const playerId = generatePlayerId();
+
+  room.participants.defense.playerId = playerId;
+
+  res.json({
+    success: true,
+    playerId
+  });
+
 });
 
 /* =====================
@@ -449,6 +489,7 @@ app.post("/api/random-match", (req, res) => {
     matched: false,
     roomId: null,
     role: null,
+    playerId: null,
     clientId,
     createdAt: Date.now()
   };
@@ -488,14 +529,24 @@ app.post("/api/random-match", (req, res) => {
   const secondTicketId = ticketId;
 
   const roomId = generateRoomId();
-  rooms[roomId] = createInitialRoom("random");
+
+  const room = createInitialRoom("random");
+
+  const attackPlayerId = generatePlayerId();
+  const defensePlayerId = generatePlayerId();
+
+  room.participants.attack.playerId = attackPlayerId;
+  room.participants.defense.playerId = defensePlayerId;
+
+  rooms[roomId] = room;
 
   randomTickets[firstTicketId] = {
     ...randomTickets[firstTicketId],
     matched: true,
     roomId,
     role: "attack",
-    matchedAt: Date.now()
+    matchedAt: Date.now),
+    playerId: attackPlayerId
   };
 
   randomTickets[secondTicketId] = {
@@ -503,7 +554,8 @@ app.post("/api/random-match", (req, res) => {
     matched: true,
     roomId,
     role: "defense",
-    matchedAt: Date.now()
+    matchedAt: Date.now),
+    playerId: defensePlayerId
   };
 
   waitingRandomTicketId = null;
@@ -513,7 +565,7 @@ app.post("/api/random-match", (req, res) => {
     ticketId: secondTicketId,
     roomId,
     role: "defense",
-    playerId
+    playerId: defensePlayerId
   });
 });
 
@@ -521,29 +573,44 @@ app.post("/api/random-match", (req, res) => {
    ランダムマッチ状態確認
 ===================== */
 app.get("/api/random-match/:ticketId", (req, res) => {
+
   cleanupRandomTickets();
   cleanupRooms();
-  
+
   const ticket = randomTickets[req.params.ticketId];
 
   if (!ticket) {
-    return res.status(404).json({ error: "Ticket not found" });
-  }
-
-  if (!ticket.matched) {
-    return res.json({
-      matched: false,
-      ticketId: req.params.ticketId
+    return res.status(404).json({
+      error: "Ticket not found"
     });
   }
 
+  if (!ticket.matched) {
+
+    return res.json({
+
+      matched: false,
+
+      ticketId: req.params.ticketId
+
+    });
+
+  }
+
   return res.json({
+
     matched: true,
+
     ticketId: req.params.ticketId,
+
     roomId: ticket.roomId,
+
     role: ticket.role,
-    playerId
+
+    playerId: ticket.playerId
+
   });
+
 });
 
 /* =====================
@@ -635,14 +702,23 @@ app.get("/api/room-state/:roomId", (req, res) => {
     return res.json({
 
       phase: room.phase,
+
       roles: room.roles,
 
+      participants: room.participants,
+
       result: {
+
         attackScore,
+
         defenseScore,
+
         attackBinary: room.finalBinary.attack,
+
         defenseBinary: room.finalBinary.defense,
+
         winner
+
       },
 
       round: room.round,
@@ -666,7 +742,6 @@ app.get("/api/room-state/:roomId", (req, res) => {
       matchEnd
 
     });
-
   }
 
   return res.json({
@@ -676,6 +751,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
     phase: room.phase,
 
     roles: room.roles,
+
+    participants: room.participants,
 
     battleState: room.battleState,
 
@@ -696,11 +773,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
     rematchState: room.rematchState,
 
     matchEnd
-
   });
-
 });
-
 /* =====================
    配置フェーズ
    ※ 実質 build：3枚のカード選択
