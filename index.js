@@ -112,6 +112,11 @@ function generateTicketId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
+function generatePlayerId() {
+  return Math.random().toString(36).substring(2, 12)
+       + Date.now().toString(36);
+}
+
 function findWaitingTicketByClientId(clientId) {
   if (!clientId) return null;
 
@@ -130,7 +135,7 @@ function findWaitingTicketByClientId(clientId) {
   return null;
 }
 
-function createInitialRoom() {
+function createInitialRoom( type = "manual") {
 
   return {
 
@@ -162,8 +167,8 @@ function createInitialRoom() {
     },
 
     roles: {
-      attack: "attack",
-      defense: "defense"
+      attack: generatePlayerId(),
+      defense: generatePlayerId()
     },
 
     totalScore: {
@@ -507,7 +512,8 @@ app.post("/api/random-match", (req, res) => {
     matched: true,
     ticketId: secondTicketId,
     roomId,
-    role: "defense"
+    role: "defense",
+    playerId
   });
 });
 
@@ -535,7 +541,8 @@ app.get("/api/random-match/:ticketId", (req, res) => {
     matched: true,
     ticketId: req.params.ticketId,
     roomId: ticket.roomId,
-    role: ticket.role
+    role: ticket.role,
+    playerId
   });
 });
 
