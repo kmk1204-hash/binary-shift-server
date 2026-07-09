@@ -15,6 +15,8 @@ const RANDOM_TICKET_TTL_MS = 1000 * 60 * 3; // 3分
 
 const ROOM_TTL_MS = 5 * 60 * 1000;
 
+const RANDOM_REWARD_LIMIT_PER_ROOM = 3;
+
 function cleanupRandomTickets() {
   const now = Date.now();
 
@@ -290,6 +292,8 @@ function createInitialRoom(type = "manual") {
     },
 
     rewardMatchCount: 0,
+    rewardAppliedThisMatch: false,
+    rewardResult: null,
 
     battleState: null,
 
@@ -499,6 +503,187 @@ app.get("/api/account/:memberId", (req, res) => {
   });
 
 });
+
+/* =====================
+   Random Match Reward
+===================== */
+
+function calculateRandomMatchReward(attackScore, defenseScore) {
+
+  const diff =
+    Math.abs(attackScore - defenseScore);
+
+  if (diff === 0) {
+    return {
+      winner: "draw",
+      diff,
+      attackPoint: 1,
+      defensePoint: 1
+    };
+  }
+
+  const winner =
+    attackScore > defenseScore
+      ? "attack"
+      : "defense";
+
+  const winnerPoint =
+    Math.floor(diff / 2) + 1;
+
+  if (winner === "attack") {
+    return {
+      winner,
+      diff,
+      attackPoint: winnerPoint,
+      defensePoint: 1
+    };
+  }
+
+  return {
+    winner,
+    diff,
+    attackPoint: 1,
+    defensePoint: winnerPoint
+  };
+
+}
+
+function applyRandomMatchReward(room) {
+
+  if (!room) {
+    return null;
+  }
+
+  if (room.rewardAppliedThisMatch) {
+    return room.rewardResult;
+  }
+
+  if (room.type !== "random") {
+
+    room.rewardAppliedThisMatch = true;
+
+    room.rewardResult = {
+      applied: false,
+      reason: "not_random_match"
+    };
+
+    return room.rewardResult;
+
+  }
+
+  if (
+    room.rewardMatchCount >=
+    RANDOM_REWARD_LIMIT_PER_ROOM
+  ) {
+
+    room.rewardAppliedThisMatch = true;
+
+    room.rewardResult = {
+      applied: false,
+      reason: "reward_limit_reached",
+      rewardMatchCount: room.rewardMatchCount,
+      rewardRemainingCount: 0
+    };
+
+    return room.rewardResult;
+
+  }
+
+  const attackParticipant =
+    room.participants.attack;
+
+  const defenseParticipant =
+    room.participants.defense;
+
+  if (
+    !attackParticipant?.memberId ||
+    !defenseParticipant?.memberId
+  ) {
+
+    room.rewardAppliedThisMatch = true;
+
+    room.rewardResult = {
+      applied: false,
+      reason: "missing_member_id"
+    };
+
+    return room.rewardResult;
+
+  }
+
+  const attackScore =
+    room.totalScore.attack;
+
+  const defenseScore =
+    room.totalScore.defense;
+
+  const reward =
+    calculateRandomMatchReward(
+      attackScore,
+      defenseScore
+    );
+
+  const attackAccount =
+    ensureAccount(
+      attackParticipant.memberId,
+      attackParticipant.userName
+    );
+
+  const defenseAccount =
+    ensureAccount(
+      defenseParticipant.memberId,
+      defenseParticipant.userName
+    );
+
+  attackAccount.point +=
+    reward.attackPoint;
+
+  defenseAccount.point +=
+    reward.defensePoint;
+
+  if (reward.winner === "draw") {
+
+    attackAccount.draw++;
+    defenseAccount.draw++;
+
+  } else if (reward.winner === "attack") {
+
+    attackAccount.win++;
+    defenseAccount.lose++;
+
+  } else {
+
+    defenseAccount.win++;
+    attackAccount.lose++;
+
+  }
+
+  room.rewardMatchCount++;
+
+  room.rewardAppliedThisMatch =
+    true;
+
+  room.rewardResult = {
+    applied: true,
+    winner: reward.winner,
+    diff: reward.diff,
+
+    attackScore,
+    defenseScore,
+
+    attackPoint: reward.attackPoint,
+    defensePoint: reward.defensePoint,
+
+    rewardMatchCount: room.rewardMatchCount,
+    rewardRemainingCount: Math.max(
+      0,
+      RANDOM_REWARD_LIMIT_PER_ROOM - room.rewardMatchCount
+    )
+  };
+
+  return room.rewardResult;
+
+}
 
 /* =====================
    ルーム作成
@@ -1714,11 +1899,20 @@ function finalizeRound(room) {
       defense: null
     };
 
+    /* =====================
+       ランダムマッチ報酬処理
+       ※ room.type === "random" かつ
+          rewardMatchCount < 3 の場合のみ更新
+    ===================== */
+
+    applyRandomMatchReward(room);
+
     room.phase = "final_result";
 
   }
 
 }
+
 /* =====================
    次ラウンド
 ===================== */
