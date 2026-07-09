@@ -117,6 +117,27 @@ function generatePlayerId() {
        + Date.now().toString(36);
 }
 
+function normalizeMemberInfo(body = {}) {
+
+  const memberId =
+    typeof body.memberId === "string" &&
+    body.memberId.trim() !== ""
+      ? body.memberId.trim()
+      : null;
+
+  const userName =
+    typeof body.memberName === "string" &&
+    body.memberName.trim() !== ""
+      ? body.memberName.trim().slice(0, 24)
+      : "Guest";
+
+  return {
+    memberId,
+    userName
+  };
+
+}
+
 function findWaitingTicketByClientId(clientId) {
   if (!clientId) return null;
 
@@ -174,17 +195,16 @@ function createInitialRoom(type = "manual") {
 
     // プレイヤー情報
     participants: {
-
       attack: {
         playerId: null,
-        accountId: null
+        memberId: null,
+        userName: "Guest"
       },
-
       defense: {
         playerId: null,
-        accountId: null
+        memberId: null,
+        userName: "Guest"
       }
-
     },
 
     totalScore: {
@@ -361,7 +381,7 @@ function initializeBattleState(room) {
 /* =====================
    ルーム作成
 ===================== */
-app.get("/api/create-room", (req, res) => {
+app.post("/api/create-room", (req, res) => {
 
   const roomId = generateRoomId();
 
@@ -369,20 +389,32 @@ app.get("/api/create-room", (req, res) => {
 
   const playerId = generatePlayerId();
 
-  room.participants.attack.playerId = playerId;
+  const member =
+    normalizeMemberInfo(req.body);
+
+  room.participants.attack.playerId =
+    playerId;
+
+  room.participants.attack.memberId =
+    member.memberId;
+
+  room.participants.attack.userName =
+    member.userName;
 
   rooms[roomId] = room;
 
   res.json({
     roomId,
-    playerId
+    playerId,
+    memberId: member.memberId,
+    userName: member.userName
   });
 
 });
 /* =====================
    ルーム参加
 ===================== */
-app.get("/api/join-room/:roomId", (req, res) => {
+app.post("/api/join-room/:roomId", (req, res) => {
 
   const room = rooms[req.params.roomId];
 
@@ -398,17 +430,29 @@ app.get("/api/join-room/:roomId", (req, res) => {
     });
   }
 
-  const playerId = generatePlayerId();
+  const playerId =
+    generatePlayerId();
 
-  room.participants.defense.playerId = playerId;
+  const member =
+    normalizeMemberInfo(req.body);
+
+  room.participants.defense.playerId =
+    playerId;
+
+  room.participants.defense.memberId =
+    member.memberId;
+
+  room.participants.defense.userName =
+    member.userName;
 
   res.json({
     success: true,
-    playerId
+    playerId,
+    memberId: member.memberId,
+    userName: member.userName
   });
 
 });
-
 /* =====================
    Room離脱
 ===================== */
@@ -469,12 +513,18 @@ app.post("/api/random-match", (req, res) => {
 
   const { clientId } = req.body;
 
+  const member =
+    normalizeMemberInfo(req.body);
+
   if (!clientId) {
-    return res.status(400).json({ error: "clientId is required" });
+    return res.status(400).json({
+      error: "clientId is required"
+    });
   }
 
   // 同じclientがすでに待機中なら、新しいticketを作らず既存ticketを返す
-  const existingWaitingTicketId = findWaitingTicketByClientId(clientId);
+  const existingWaitingTicketId =
+    findWaitingTicketByClientId(clientId);
 
   if (existingWaitingTicketId) {
     return res.json({
@@ -483,32 +533,55 @@ app.post("/api/random-match", (req, res) => {
     });
   }
 
-  const ticketId = generateTicketId();
-
-  randomTickets[ticketId] = {
-    matched: false,
-    roomId: null,
-    role: null,
-    playerId: null,
-    clientId,
-    createdAt: Date.now()
-  };
+  // 待機ticketが壊れていた場合はリセット
+  if (
+    waitingRandomTicketId &&
+    (
+      !randomTickets[waitingRandomTicketId] ||
+      randomTickets[waitingRandomTicketId].matched
+    )
+  ) {
+    waitingRandomTicketId = null;
+  }
 
   // 待機者がいない場合：自分が待機
-  if (!waitingRandomTicketId || !randomTickets[waitingRandomTicketId]) {
-    waitingRandomTicketId = ticketId;
+  if (!waitingRandomTicketId) {
+
+    const ticketId =
+      generateTicketId();
+
+    randomTickets[ticketId] = {
+      clientId,
+      matched: false,
+      roomId: null,
+      role: null,
+      playerId: null,
+      memberId: member.memberId,
+      userName: member.userName,
+      createdAt: Date.now()
+    };
+
+    waitingRandomTicketId =
+      ticketId;
 
     return res.json({
       matched: false,
       ticketId
     });
+
   }
 
-  const firstTicketId = waitingRandomTicketId;
-  const firstTicket = randomTickets[firstTicketId];
+  const firstTicketId =
+    waitingRandomTicketId;
 
-  // 待機者が自分自身ならマッチさせない
-  if (firstTicket && firstTicket.clientId === clientId) {
+  const firstTicket =
+    randomTickets[firstTicketId];
+
+  // 念のため、待機者が自分自身ならマッチさせない
+  if (
+    firstTicket &&
+    firstTicket.clientId === clientId
+  ) {
     return res.json({
       matched: false,
       ticketId: firstTicketId
@@ -517,28 +590,78 @@ app.post("/api/random-match", (req, res) => {
 
   // 待機者が壊れていた場合
   if (!firstTicket || firstTicket.matched) {
-    waitingRandomTicketId = ticketId;
+
+    const ticketId =
+      generateTicketId();
+
+    randomTickets[ticketId] = {
+      clientId,
+      matched: false,
+      roomId: null,
+      role: null,
+      playerId: null,
+      memberId: member.memberId,
+      userName: member.userName,
+      createdAt: Date.now()
+    };
+
+    waitingRandomTicketId =
+      ticketId;
 
     return res.json({
       matched: false,
       ticketId
     });
+
   }
 
   // 待機者がいる場合：マッチ成立
-  const secondTicketId = ticketId;
+  const secondTicketId =
+    generateTicketId();
 
-  const roomId = generateRoomId();
+  randomTickets[secondTicketId] = {
+    clientId,
+    matched: false,
+    roomId: null,
+    role: null,
+    playerId: null,
+    memberId: member.memberId,
+    userName: member.userName,
+    createdAt: Date.now()
+  };
 
-  const room = createInitialRoom("random");
+  const roomId =
+    generateRoomId();
 
-  const attackPlayerId = generatePlayerId();
-  const defensePlayerId = generatePlayerId();
+  const room =
+    createInitialRoom("random");
 
-  room.participants.attack.playerId = attackPlayerId;
-  room.participants.defense.playerId = defensePlayerId;
+  const attackPlayerId =
+    generatePlayerId();
 
-  rooms[roomId] = room;
+  const defensePlayerId =
+    generatePlayerId();
+
+  room.participants.attack.playerId =
+    attackPlayerId;
+
+  room.participants.attack.memberId =
+    firstTicket.memberId;
+
+  room.participants.attack.userName =
+    firstTicket.userName || "Guest";
+
+  room.participants.defense.playerId =
+    defensePlayerId;
+
+  room.participants.defense.memberId =
+    member.memberId;
+
+  room.participants.defense.userName =
+    member.userName;
+
+  rooms[roomId] =
+    room;
 
   randomTickets[firstTicketId] = {
     ...randomTickets[firstTicketId],
@@ -558,14 +681,17 @@ app.post("/api/random-match", (req, res) => {
     playerId: defensePlayerId
   };
 
-  waitingRandomTicketId = null;
+  waitingRandomTicketId =
+    null;
 
   return res.json({
     matched: true,
     ticketId: secondTicketId,
     roomId,
     role: "defense",
-    playerId: defensePlayerId
+    playerId: defensePlayerId,
+    memberId: member.memberId,
+    userName: member.userName
   });
 });
 
