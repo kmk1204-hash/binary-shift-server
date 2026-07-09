@@ -9,6 +9,8 @@ const rooms = {};
 let waitingRandomTicketId = null;
 const randomTickets = {};
 
+const accounts = {};
+
 const RANDOM_TICKET_TTL_MS = 1000 * 60 * 3; // 3分
 
 const ROOM_TTL_MS = 5 * 60 * 1000;
@@ -134,6 +136,76 @@ function normalizeMemberInfo(body = {}) {
   return {
     memberId,
     userName
+  };
+
+}
+
+/* =====================
+   Account
+===================== */
+
+function createDefaultAccount(memberId, userName) {
+
+  return {
+    memberId,
+
+    userName: userName || "Guest",
+
+    point: 0,
+
+    win: 0,
+
+    lose: 0,
+
+    draw: 0,
+
+    createdAt: Date.now(),
+
+    lastLogin: Date.now()
+  };
+
+}
+
+function ensureAccount(memberId, userName) {
+
+  if (!memberId) {
+    return null;
+  }
+
+  if (!accounts[memberId]) {
+
+    accounts[memberId] =
+      createDefaultAccount(memberId, userName);
+
+  } else {
+
+    accounts[memberId].userName =
+      userName || accounts[memberId].userName;
+
+    accounts[memberId].lastLogin =
+      Date.now();
+
+  }
+
+  return accounts[memberId];
+
+}
+
+function toPublicAccount(account) {
+
+  if (!account) {
+    return null;
+  }
+
+  return {
+    memberId: account.memberId,
+    userName: account.userName,
+    point: account.point,
+    win: account.win,
+    lose: account.lose,
+    draw: account.draw,
+    createdAt: account.createdAt,
+    lastLogin: account.lastLogin
   };
 
 }
@@ -379,6 +451,54 @@ function initializeBattleState(room) {
 }
 
 /* =====================
+   Account API
+===================== */
+
+app.post("/api/account/register", (req, res) => {
+
+  const member =
+    normalizeMemberInfo(req.body);
+
+  if (!member.memberId) {
+    return res.status(400).json({
+      error: "memberId is required"
+    });
+  }
+
+  const account =
+    ensureAccount(
+      member.memberId,
+      member.userName
+    );
+
+  res.json({
+    success: true,
+    account: toPublicAccount(account)
+  });
+
+});
+
+app.get("/api/account/:memberId", (req, res) => {
+
+  const { memberId } =
+    req.params;
+
+  const account =
+    accounts[memberId];
+
+  if (!account) {
+    return res.status(404).json({
+      error: "Account not found"
+    });
+  }
+
+  res.json({
+    account: toPublicAccount(account)
+  });
+
+});
+
+/* =====================
    ルーム作成
 ===================== */
 app.post("/api/create-room", (req, res) => {
@@ -391,6 +511,11 @@ app.post("/api/create-room", (req, res) => {
 
   const member =
     normalizeMemberInfo(req.body);
+
+  ensureAccount(
+    member.memberId,
+    member.userName
+  );
 
   room.participants.attack.playerId =
     playerId;
@@ -435,6 +560,11 @@ app.post("/api/join-room/:roomId", (req, res) => {
 
   const member =
     normalizeMemberInfo(req.body);
+
+  ensureAccount(
+    member.memberId,
+    member.userName
+  );
 
   room.participants.defense.playerId =
     playerId;
@@ -515,6 +645,11 @@ app.post("/api/random-match", (req, res) => {
 
   const member =
     normalizeMemberInfo(req.body);
+
+  ensureAccount(
+    member.memberId,
+    member.userName
+  );
 
   if (!clientId) {
     return res.status(400).json({
