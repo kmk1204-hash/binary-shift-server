@@ -361,6 +361,14 @@ function resetRoomForRematch(room) {
     defense: null
   };
 
+  /* =====================
+     再戦時の報酬状態リセット
+     ※ rewardMatchCount はリセットしない
+  ===================== */
+
+  room.rewardAppliedThisMatch = false;
+  room.rewardResult = null;
+
   resetRoomForBuild(room);
 
   room.rematchState = {
@@ -1132,12 +1140,22 @@ app.get("/api/room-state/:roomId", (req, res) => {
     defense: room.rematchState?.defense ?? null
   };
 
+  const rewardRemainingCount =
+    Math.max(
+      0,
+      RANDOM_REWARD_LIMIT_PER_ROOM - room.rewardMatchCount
+    );
+
   if (room.phase === "final_result") {
 
-    const attackScore = room.totalScore.attack;
-    const defenseScore = room.totalScore.defense;
+    const attackScore =
+      room.totalScore.attack;
 
-    let winner = "draw";
+    const defenseScore =
+      room.totalScore.defense;
+
+    let winner =
+      "draw";
 
     if (attackScore > defenseScore) {
       winner = "attack";
@@ -1148,6 +1166,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
     }
 
     return res.json({
+
+      type: room.type,
 
       phase: room.phase,
 
@@ -1176,10 +1196,10 @@ app.get("/api/room-state/:roomId", (req, res) => {
       finalBinary: room.finalBinary,
 
       rewardMatchCount: room.rewardMatchCount,
-      rewardRemainingCount: Math.max(
-        0,
-        3 - room.rewardMatchCount
-      ),
+
+      rewardRemainingCount,
+
+      rewardResult: room.rewardResult ?? null,
 
       placementInfo,
 
@@ -1213,12 +1233,12 @@ app.get("/api/room-state/:roomId", (req, res) => {
     round: room.round,
 
     totalScore: room.totalScore,
-    
+
     rewardMatchCount: room.rewardMatchCount,
-    rewardRemainingCount: Math.max(
-      0,
-      3 - room.rewardMatchCount
-    ),
+
+    rewardRemainingCount,
+
+    rewardResult: room.rewardResult ?? null,
 
     placementInfo,
 
@@ -1233,8 +1253,10 @@ app.get("/api/room-state/:roomId", (req, res) => {
     rematchState: room.rematchState,
 
     matchEnd
+
   });
 });
+
 /* =====================
    配置フェーズ
    ※ 実質 build：3枚のカード選択
