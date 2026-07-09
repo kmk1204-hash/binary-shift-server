@@ -289,6 +289,8 @@ function createInitialRoom(type = "manual") {
       defense: null
     },
 
+    rewardMatchCount: 0,
+
     battleState: null,
 
     openInfo: null,
@@ -988,6 +990,12 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
       finalBinary: room.finalBinary,
 
+      rewardMatchCount: room.rewardMatchCount,
+      rewardRemainingCount: Math.max(
+        0,
+        3 - room.rewardMatchCount
+      ),
+
       placementInfo,
 
       openInfo: room.openInfo ?? null,
@@ -1020,6 +1028,12 @@ app.get("/api/room-state/:roomId", (req, res) => {
     round: room.round,
 
     totalScore: room.totalScore,
+    
+    rewardMatchCount: room.rewardMatchCount,
+    rewardRemainingCount: Math.max(
+      0,
+      3 - room.rewardMatchCount
+    ),
 
     placementInfo,
 
