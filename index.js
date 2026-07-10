@@ -17,6 +17,15 @@ const ROOM_TTL_MS = 5 * 60 * 1000;
 
 const RANDOM_REWARD_LIMIT_PER_ROOM = 3;
 
+const DEFAULT_PROFILE_ICON = "icon_01";
+
+const PROFILE_ICON_IDS = [
+  "icon_01",
+  "icon_02",
+  "icon_03",
+  "icon_04"
+];
+
 function cleanupRandomTickets() {
   const now = Date.now();
 
@@ -153,6 +162,8 @@ function createDefaultAccount(memberId, userName) {
 
     userName: userName || "Guest",
 
+    profileIcon: DEFAULT_PROFILE_ICON,
+
     point: 0,
 
     win: 0,
@@ -202,12 +213,35 @@ function toPublicAccount(account) {
   return {
     memberId: account.memberId,
     userName: account.userName,
+    profileIcon:
+      account.profileIcon || DEFAULT_PROFILE_ICON,
     point: account.point,
     win: account.win,
     lose: account.lose,
     draw: account.draw,
     createdAt: account.createdAt,
     lastLogin: account.lastLogin
+  };
+
+}
+
+function normalizeProfileUpdate(body = {}) {
+
+  const userName =
+    typeof body.userName === "string" &&
+    body.userName.trim() !== ""
+      ? body.userName.trim().slice(0, 24)
+      : null;
+
+  const profileIcon =
+    typeof body.profileIcon === "string" &&
+    PROFILE_ICON_IDS.includes(body.profileIcon)
+      ? body.profileIcon
+      : null;
+
+  return {
+    userName,
+    profileIcon
   };
 
 }
@@ -467,6 +501,46 @@ function initializeBattleState(room) {
 /* =====================
    Account API
 ===================== */
+
+app.post("/api/account/update-profile", (req, res) => {
+
+  const member =
+    normalizeMemberInfo(req.body);
+
+  if (!member.memberId) {
+    return res.status(400).json({
+      error: "memberId is required"
+    });
+  }
+
+  const account =
+    ensureAccount(
+      member.memberId,
+      member.userName
+    );
+
+  const profile =
+    normalizeProfileUpdate(req.body);
+
+  if (profile.userName) {
+    account.userName =
+      profile.userName;
+  }
+
+  if (profile.profileIcon) {
+    account.profileIcon =
+      profile.profileIcon;
+  }
+
+  account.lastLogin =
+    Date.now();
+
+  res.json({
+    success: true,
+    account: toPublicAccount(account)
+  });
+
+});
 
 app.post("/api/account/register", (req, res) => {
 
