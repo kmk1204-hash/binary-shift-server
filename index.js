@@ -676,7 +676,7 @@ function resetRoomForRematch(room) {
     defense: false
   };
 
-}
+
 
 function createEmptyOpenInfo() {
   return {
