@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "crypto";
 
 const app = express();
 app.use(cors());
@@ -18,6 +19,93 @@ const ROOM_TTL_MS =
 const RANDOM_REWARD_LIMIT_PER_ROOM =
   3;
 
+const BINARY_SHIFT_SERVER_KEY =
+  process.env.BINARY_SHIFT_SERVER_KEY || "";
+
+if (!BINARY_SHIFT_SERVER_KEY) {
+
+  console.error(
+    "BINARY_SHIFT_SERVER_KEY is not configured"
+  );
+
+  process.exit(1);
+
+}
+
+/* =====================
+   共有キー比較
+===================== */
+
+function safeCompareSecret(
+  providedValue,
+  expectedValue
+) {
+
+  if (
+    typeof providedValue !== "string" ||
+    typeof expectedValue !== "string"
+  ) {
+    return false;
+  }
+
+  const providedBuffer =
+    Buffer.from(
+      providedValue,
+      "utf8"
+    );
+
+  const expectedBuffer =
+    Buffer.from(
+      expectedValue,
+      "utf8"
+    );
+
+  if (
+    providedBuffer.length !==
+    expectedBuffer.length
+  ) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    providedBuffer,
+    expectedBuffer
+  );
+
+}
+
+/* =====================
+   Wixバックエンド認証
+===================== */
+
+function requireWixBackend(
+  req,
+  res,
+  next
+) {
+
+  const providedKey =
+    req.get(
+      "x-binary-shift-key"
+    );
+
+  if (
+    !safeCompareSecret(
+      providedKey,
+      BINARY_SHIFT_SERVER_KEY
+    )
+  ) {
+
+    return res.status(403).json({
+      error: "Forbidden",
+      reason: "invalid_server_key"
+    });
+
+  }
+
+  next();
+
+}
 
 function cleanupRandomTickets() {
   const now = Date.now();
@@ -688,78 +776,109 @@ function applyRandomMatchReward(room) {
    ルーム作成
 ===================== */
 
-app.post("/api/create-room", (req, res) => {
+app.post(
+  "/api/create-room",
+  requireWixBackend,
+  (req, res) => {
 
-  const roomId =
-    generateRoomId();
+    const roomId =
+      generateRoomId();
 
-  const room =
-    createInitialRoom("manual");
+    const room =
+      createInitialRoom("manual");
 
-  const playerId =
-    generatePlayerId();
+    const playerId =
+      generatePlayerId();
 
-  const member =
-    normalizeMemberInfo(req.body);
+    const member =
+      normalizeMemberInfo(req.body);
 
-  room.participants.attack.playerId =
-    playerId;
+    if (!member.memberId) {
 
-  room.participants.attack.memberId =
-    member.memberId;
+      return res.status(400).json({
+        error: "memberId is required",
+        reason: "missing_member_id"
+      });
 
-  rooms[roomId] =
-    room;
+    }
 
-  res.json({
-    roomId,
-    playerId
-  });
+    room.participants.attack.playerId =
+      playerId;
 
-});
+    room.participants.attack.memberId =
+      member.memberId;
+
+    rooms[roomId] =
+      room;
+
+    return res.json({
+      roomId,
+      playerId
+    });
+
+  }
+);
 
 
 /* =====================
    ルーム参加
 ===================== */
 
-app.post("/api/join-room/:roomId", (req, res) => {
+app.post(
+  "/api/join-room/:roomId",
+  requireWixBackend,
+  (req, res) => {
 
-  const room =
-    rooms[req.params.roomId];
+    const room =
+      rooms[req.params.roomId];
 
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
+    if (!room) {
+
+      return res.status(404).json({
+        error: "Room not found"
+      });
+
+    }
+
+    if (
+      room.participants.defense.playerId !==
+      null
+    ) {
+
+      return res.status(400).json({
+        error: "Room is full"
+      });
+
+    }
+
+    const member =
+      normalizeMemberInfo(req.body);
+
+    if (!member.memberId) {
+
+      return res.status(400).json({
+        error: "memberId is required",
+        reason: "missing_member_id"
+      });
+
+    }
+
+    const playerId =
+      generatePlayerId();
+
+    room.participants.defense.playerId =
+      playerId;
+
+    room.participants.defense.memberId =
+      member.memberId;
+
+    return res.json({
+      success: true,
+      playerId
     });
+
   }
-
-  if (
-    room.participants.defense.playerId !== null
-  ) {
-    return res.status(400).json({
-      error: "Room is full"
-    });
-  }
-
-  const playerId =
-    generatePlayerId();
-
-  const member =
-    normalizeMemberInfo(req.body);
-
-  room.participants.defense.playerId =
-    playerId;
-
-  room.participants.defense.memberId =
-    member.memberId;
-
-  res.json({
-    success: true,
-    playerId
-  });
-
-});
+);
 
 /* =====================
    Room離脱
@@ -815,254 +934,347 @@ app.post("/api/leave-room/:roomId", (req, res) => {
 /* =====================
    ランダムマッチ開始
 ===================== */
-app.post("/api/random-match", (req, res) => {
 
-  cleanupRandomTickets();
-  cleanupRooms();
+app.post(
+  "/api/random-match",
+  requireWixBackend,
+  (req, res) => {
 
-  const clientId =
-    typeof req.body?.clientId === "string"
-      ? req.body.clientId.trim()
-      : "";
+    cleanupRandomTickets();
+    cleanupRooms();
 
-  const member =
-    normalizeMemberInfo(req.body);
+    const clientId =
+      typeof req.body?.clientId === "string"
+        ? req.body.clientId.trim()
+        : "";
 
-  if (!clientId) {
-    return res.status(400).json({
-      error: "clientId is required"
-    });
-  }
+    const member =
+      normalizeMemberInfo(req.body);
 
-  if (!member.memberId) {
-    return res.status(401).json({
-      error: "Login is required",
-      reason: "missing_member_id"
-    });
-  }
+    if (!clientId) {
 
-  // 同じclientがすでに待機中なら、新しいticketを作らず既存ticketを返す
-  const existingWaitingTicketId =
-    findWaitingTicketByClientId(
-      clientId
-    );
+      return res.status(400).json({
+        error: "clientId is required"
+      });
 
-  if (existingWaitingTicketId) {
+    }
 
-    const existingTicket =
+    if (!member.memberId) {
+
+      return res.status(401).json({
+        error: "Login is required",
+        reason: "missing_member_id"
+      });
+
+    }
+
+    /*
+      同じclientがすでに待機中なら、
+      新しいticketを作らず既存ticketを返す
+    */
+
+    const existingWaitingTicketId =
+      findWaitingTicketByClientId(
+        clientId
+      );
+
+    if (existingWaitingTicketId) {
+
+      const existingTicket =
+        randomTickets[
+          existingWaitingTicketId
+        ];
+
+      /*
+        同じclientIdなのに、
+        memberIdが異なる場合は拒否
+      */
+
+      if (
+        existingTicket.memberId !==
+        member.memberId
+      ) {
+
+        return res.status(403).json({
+          error: "Ticket owner mismatch",
+          reason: "ticket_owner_mismatch"
+        });
+
+      }
+
+      return res.json({
+        matched: false,
+        ticketId:
+          existingWaitingTicketId
+      });
+
+    }
+
+    /*
+      別タブ・別ブラウザであっても、
+      同じアカウントがすでに待機中なら拒否
+    */
+
+    const existingMemberTicketId =
+      findWaitingTicketByMemberId(
+        member.memberId
+      );
+
+    if (existingMemberTicketId) {
+
+      return res.status(409).json({
+        error:
+          "This account is already waiting",
+        reason:
+          "same_member_already_waiting"
+      });
+
+    }
+
+    /*
+      waitingRandomTicketIdが
+      壊れていた場合はリセット
+    */
+
+    if (
+      waitingRandomTicketId &&
+      (
+        !randomTickets[
+          waitingRandomTicketId
+        ] ||
+        randomTickets[
+          waitingRandomTicketId
+        ].matched
+      )
+    ) {
+
+      waitingRandomTicketId =
+        null;
+
+    }
+
+    /*
+      待機者がいない場合：
+      自分が待機
+    */
+
+    if (!waitingRandomTicketId) {
+
+      const ticketId =
+        generateTicketId();
+
+      randomTickets[ticketId] = {
+        clientId,
+        matched: false,
+        roomId: null,
+        role: null,
+        playerId: null,
+        memberId:
+          member.memberId,
+        createdAt:
+          Date.now()
+      };
+
+      waitingRandomTicketId =
+        ticketId;
+
+      return res.json({
+        matched: false,
+        ticketId
+      });
+
+    }
+
+    const firstTicketId =
+      waitingRandomTicketId;
+
+    const firstTicket =
       randomTickets[
-        existingWaitingTicketId
+        firstTicketId
       ];
 
     /*
-      同じブラウザ識別子なのに
-      memberIdが変わっている場合は拒否
+      待機者が壊れていた場合
     */
+
     if (
-      existingTicket.memberId !==
-      member.memberId
+      !firstTicket ||
+      firstTicket.matched
     ) {
-      return res.status(403).json({
-        error: "Ticket owner mismatch",
-        reason: "ticket_owner_mismatch"
+
+      const ticketId =
+        generateTicketId();
+
+      randomTickets[ticketId] = {
+        clientId,
+        matched: false,
+        roomId: null,
+        role: null,
+        playerId: null,
+        memberId:
+          member.memberId,
+        createdAt:
+          Date.now()
+      };
+
+      waitingRandomTicketId =
+        ticketId;
+
+      return res.json({
+        matched: false,
+        ticketId
       });
+
     }
 
-    return res.json({
-      matched: false,
-      ticketId:
-        existingWaitingTicketId
-    });
+    /*
+      待機者が自分自身のclientIdなら
+      マッチさせない
+    */
 
-  }
+    if (
+      firstTicket.clientId ===
+      clientId
+    ) {
 
-  /*
-    別タブ・別ブラウザであっても、
-    同じアカウントがすでに待機中なら
-    新しい待機チケットを作らない
-  */
-  const existingMemberTicketId =
-    findWaitingTicketByMemberId(
+      return res.json({
+        matched: false,
+        ticketId:
+          firstTicketId
+      });
+
+    }
+
+    /*
+      同一Wixアカウント同士は
+      マッチさせない
+    */
+
+    if (
+      firstTicket.memberId ===
       member.memberId
-    );
+    ) {
 
-  if (existingMemberTicketId) {
-    return res.status(409).json({
-      error:
-        "This account is already waiting",
-      reason:
-        "same_member_already_waiting"
-    });
-  }
+      return res.status(409).json({
+        matched: false,
+        error:
+          "You cannot match with the same account",
+        reason:
+          "same_member_id"
+      });
 
-  // 待機ticketが壊れていた場合はリセット
-  if (
-    waitingRandomTicketId &&
-    (
-      !randomTickets[waitingRandomTicketId] ||
-      randomTickets[waitingRandomTicketId].matched
-    )
-  ) {
-    waitingRandomTicketId = null;
-  }
+    }
 
-  // 待機者がいない場合：自分が待機
-  if (!waitingRandomTicketId) {
+    /*
+      待機者がいる場合：
+      マッチ成立
+    */
 
-    const ticketId =
+    const secondTicketId =
       generateTicketId();
 
-    randomTickets[ticketId] = {
+    randomTickets[
+      secondTicketId
+    ] = {
       clientId,
       matched: false,
       roomId: null,
       role: null,
       playerId: null,
-      memberId: member.memberId,
-      createdAt: Date.now()
-    };
-    waitingRandomTicketId =
-      ticketId;
-
-    return res.json({
-      matched: false,
-      ticketId
-    });
-
-  }
-
-  const firstTicketId =
-    waitingRandomTicketId;
-
-  const firstTicket =
-    randomTickets[firstTicketId];
-
-  /*
-    同一Wixアカウント同士は
-    ランダムマッチさせない
-  */
-  if (
-    firstTicket &&
-    firstTicket.memberId ===
-    member.memberId
-  ) {
-    return res.status(409).json({
-      matched: false,
-      error:
-        "You cannot match with the same account",
-      reason:
-        "same_member_id"
-    });
-  }
-
-  // 念のため、待機者が自分自身ならマッチさせない
-  if (
-    firstTicket &&
-    firstTicket.clientId === clientId
-  ) {
-    return res.json({
-      matched: false,
-      ticketId: firstTicketId
-    });
-  }
-
-  // 待機者が壊れていた場合
-  if (!firstTicket || firstTicket.matched) {
-
-    const ticketId =
-      generateTicketId();
-
-    randomTickets[ticketId] = {
-      clientId,
-      matched: false,
-      roomId: null,
-      role: null,
-      playerId: null,
-      memberId: member.memberId,
-      createdAt: Date.now()
+      memberId:
+        member.memberId,
+      createdAt:
+        Date.now()
     };
 
+    const roomId =
+      generateRoomId();
+
+    const room =
+      createInitialRoom(
+        "random"
+      );
+
+    const attackPlayerId =
+      generatePlayerId();
+
+    const defensePlayerId =
+      generatePlayerId();
+
+    room.participants
+      .attack.playerId =
+        attackPlayerId;
+
+    room.participants
+      .attack.memberId =
+        firstTicket.memberId;
+
+    room.participants
+      .defense.playerId =
+        defensePlayerId;
+
+    room.participants
+      .defense.memberId =
+        member.memberId;
+
+    rooms[roomId] =
+      room;
+
+    randomTickets[
+      firstTicketId
+    ] = {
+      ...randomTickets[
+        firstTicketId
+      ],
+
+      matched: true,
+
+      roomId,
+
+      role: "attack",
+
+      matchedAt:
+        Date.now(),
+
+      playerId:
+        attackPlayerId
+    };
+
+    randomTickets[
+      secondTicketId
+    ] = {
+      ...randomTickets[
+        secondTicketId
+      ],
+
+      matched: true,
+
+      roomId,
+
+      role: "defense",
+
+      matchedAt:
+        Date.now(),
+
+      playerId:
+        defensePlayerId
+    };
+
     waitingRandomTicketId =
-      ticketId;
+      null;
 
     return res.json({
-      matched: false,
-      ticketId
+      matched: true,
+      ticketId:
+        secondTicketId,
+      roomId,
+      role: "defense",
+      playerId:
+        defensePlayerId
     });
 
   }
-
-  // 待機者がいる場合：マッチ成立
-  const secondTicketId =
-    generateTicketId();
-
-  randomTickets[secondTicketId] = {
-    clientId,
-    matched: false,
-    roomId: null,
-    role: null,
-    playerId: null,
-    memberId: member.memberId,
-    createdAt: Date.now()
-  };
-
-  const roomId =
-    generateRoomId();
-
-  const room =
-    createInitialRoom("random");
-
-  const attackPlayerId =
-    generatePlayerId();
-
-  const defensePlayerId =
-    generatePlayerId();
-
-  room.participants.attack.playerId =
-    attackPlayerId;
-
-  room.participants.attack.memberId =
-    firstTicket.memberId;
-
-  room.participants.defense.playerId =
-    defensePlayerId;
-
-  room.participants.defense.memberId =
-    member.memberId;
-
-  rooms[roomId] =
-    room;
-
-  randomTickets[firstTicketId] = {
-    ...randomTickets[firstTicketId],
-    matched: true,
-    roomId,
-    role: "attack",
-    matchedAt: Date.now(),
-    playerId: attackPlayerId
-  };
-
-  randomTickets[secondTicketId] = {
-    ...randomTickets[secondTicketId],
-    matched: true,
-    roomId,
-    role: "defense",
-    matchedAt: Date.now(),
-    playerId: defensePlayerId
-  };
-
-  waitingRandomTicketId =
-    null;
-
-  return res.json({
-    matched: true,
-    ticketId: secondTicketId,
-    roomId,
-    role: "defense",
-    playerId: defensePlayerId,
-    memberId: member.memberId,
-  });
-});
+);
 
 /* =====================
    ランダムマッチ状態確認
