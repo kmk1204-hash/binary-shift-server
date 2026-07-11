@@ -23,7 +23,8 @@ const PROFILE_ICON_IDS = [
   "icon_01",
   "icon_02",
   "icon_03",
-  "icon_04"
+  "icon_04",
+  "icon_05"
 ];
 
 function cleanupRandomTickets() {
