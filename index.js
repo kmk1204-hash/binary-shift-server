@@ -618,7 +618,6 @@ function resetRoomForRematch(room) {
 
   /*
     同一Room内の試合番号を進める
-    1試合目 → 2試合目 → 3試合目…
   */
   room.matchNumber =
     (room.matchNumber ?? 1) + 1;
@@ -656,30 +655,10 @@ function resetRoomForRematch(room) {
 
 }
 
-  /* =====================
-     再戦時の報酬状態リセット
-     ※ rewardMatchCount はリセットしない
-  ===================== */
-
-  room.rewardAppliedThisMatch = false;
-  room.rewardResult = null;
-
-  resetRoomForBuild(room);
-
-  room.rematchState = {
-    attack: null,
-    defense: null
-  };
-
-  room.leaveState = {
-    attack: false,
-    defense: false
-  };
-
-
-
 function createEmptyOpenInfo() {
+
   return {
+
     completed: false,
 
     defenseOpen: {
@@ -693,9 +672,10 @@ function createEmptyOpenInfo() {
       oneCount: 0,
       total: 0
     }
-  };
-}
 
+  };
+
+}
 function countCards(cards) {
   return {
     zeroCount: cards.filter(c => c === 0).length,
