@@ -509,6 +509,8 @@ function createInitialRoom(type = "manual") {
     rewardAppliedThisMatch: false,
     rewardResult: null,
 
+    matchNumber: 1,
+
     battleState: null,
 
     openInfo: null,
@@ -614,6 +616,13 @@ function resetRoomForBuild(room) {
 
 function resetRoomForRematch(room) {
 
+  /*
+    同一Room内の試合番号を進める
+    1試合目 → 2試合目 → 3試合目…
+  */
+  room.matchNumber =
+    (room.matchNumber ?? 1) + 1;
+
   room.round = 1;
 
   room.totalScore = {
@@ -625,6 +634,27 @@ function resetRoomForRematch(room) {
     attack: null,
     defense: null
   };
+
+  /*
+    新しい試合では報酬計算を再実行できるようにする。
+    rewardMatchCountはリセットしない。
+  */
+  room.rewardAppliedThisMatch = false;
+  room.rewardResult = null;
+
+  resetRoomForBuild(room);
+
+  room.rematchState = {
+    attack: null,
+    defense: null
+  };
+
+  room.leaveState = {
+    attack: false,
+    defense: false
+  };
+
+}
 
   /* =====================
      再戦時の報酬状態リセット
@@ -1517,6 +1547,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
       rewardResult: room.rewardResult ?? null,
 
+      matchNumber: room.matchNumber ?? 1,
+
       placementInfo,
 
       openInfo: room.openInfo ?? null,
@@ -1556,6 +1588,8 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
     rewardResult: room.rewardResult ?? null,
 
+    matchNumber: room.matchNumber ?? 1,
+
     placementInfo,
 
     openInfo: room.openInfo ?? null,
@@ -1572,6 +1606,132 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
   });
 });
+
+/* =====================
+   PlayerIdからParticipantを取得
+===================== */
+
+function getParticipantByPlayerId(
+  room,
+  playerId
+) {
+
+  if (
+    room.participants.attack.playerId ===
+    playerId
+  ) {
+    return {
+      participant: "attack",
+      data: room.participants.attack
+    };
+  }
+
+  if (
+    room.participants.defense.playerId ===
+    playerId
+  ) {
+    return {
+      participant: "defense",
+      data: room.participants.defense
+    };
+  }
+
+  return null;
+
+}
+
+/* =====================
+   Participant別報酬生成
+===================== */
+
+function createParticipantReward(
+  roomId,
+  room,
+  participant
+) {
+
+  const reward =
+    room.rewardResult;
+
+  if (!reward) {
+    return {
+      eligible: false,
+      reason: "reward_not_ready"
+    };
+  }
+
+  if (!reward.applied) {
+    return {
+      eligible: false,
+      reason:
+        reward.reason ||
+        "reward_not_applied",
+
+      roomId,
+
+      matchNumber:
+        room.matchNumber ?? 1,
+
+      participant
+    };
+  }
+
+  const point =
+    participant === "attack"
+      ? reward.attackPoint
+      : reward.defensePoint;
+
+  let result =
+    "lose";
+
+  if (reward.winner === "draw") {
+
+    result = "draw";
+
+  } else if (
+    reward.winner === participant
+  ) {
+
+    result = "win";
+
+  }
+
+  const matchNumber =
+    room.matchNumber ?? 1;
+
+  const rewardId =
+    `${roomId}_${matchNumber}_${participant}`;
+
+  return {
+    eligible: true,
+
+    rewardId,
+
+    roomId,
+
+    matchNumber,
+
+    participant,
+
+    point:
+      Number(point ?? 0),
+
+    result,
+
+    winner:
+      reward.winner,
+
+    diff:
+      reward.diff,
+
+    rewardMatchCount:
+      reward.rewardMatchCount,
+
+    rewardRemainingCount:
+      reward.rewardRemainingCount
+  };
+
+}
 
 /* =====================
    配置フェーズ
@@ -2449,6 +2609,115 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
   });
 
 });
+
+/* =====================
+   報酬確認API
+   POST /api/reward-claim-info/:roomId
+===================== */
+
+app.post(
+  "/api/reward-claim-info/:roomId",
+  (req, res) => {
+
+    cleanupRooms();
+
+    const roomId =
+      req.params.roomId;
+
+    const room =
+      rooms[roomId];
+
+    if (!room) {
+      return res.status(404).json({
+        error: "Room not found"
+      });
+    }
+
+    const playerId =
+      typeof req.body?.playerId === "string"
+        ? req.body.playerId.trim()
+        : "";
+
+    if (!playerId) {
+      return res.status(400).json({
+        error: "playerId is required"
+      });
+    }
+
+    const participantInfo =
+      getParticipantByPlayerId(
+        room,
+        playerId
+      );
+
+    if (!participantInfo) {
+      return res.status(403).json({
+        error: "Player is not in this room"
+      });
+    }
+
+    /*
+      報酬はランダムマッチのみ
+    */
+    if (room.type !== "random") {
+      return res.json({
+        eligible: false,
+        reason: "not_random_match"
+      });
+    }
+
+    /*
+      最終結果へ到達していなければ
+      報酬はまだ確定していない
+    */
+    if (room.phase !== "final_result") {
+      return res.json({
+        eligible: false,
+        reason: "match_not_finished"
+      });
+    }
+
+    const participant =
+      participantInfo.participant;
+
+    const participantData =
+      participantInfo.data;
+
+    /*
+      memberIdがなければWix Dataへ
+      紐づけられない
+    */
+    if (!participantData.memberId) {
+      return res.json({
+        eligible: false,
+        reason: "missing_member_id"
+      });
+    }
+
+    const reward =
+      createParticipantReward(
+        roomId,
+        room,
+        participant
+      );
+
+    if (!reward.eligible) {
+      return res.json(reward);
+    }
+
+    return res.json({
+      ...reward,
+
+      /*
+        次回、Wixバックエンド側で
+        ログイン中memberIdとの一致を確認する
+      */
+      memberId:
+        participantData.memberId
+    });
+
+  }
+);
 
 /* =====================
    起動
