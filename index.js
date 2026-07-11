@@ -125,10 +125,15 @@ function generatePlayerId() {
 
 function normalizeMemberInfo(body = {}) {
 
-  const memberId =
-    typeof body.memberId === "string" &&
-    body.memberId.trim() !== ""
+  const rawMemberId =
+    typeof body.memberId === "string"
       ? body.memberId.trim()
+      : "";
+
+  const memberId =
+    rawMemberId.length > 0 &&
+    rawMemberId.length <= 128
+      ? rawMemberId
       : null;
 
   return {
@@ -193,6 +198,34 @@ function findWaitingTicketByClientId(clientId) {
   }
 
   return null;
+}
+
+function findWaitingTicketByMemberId(memberId) {
+
+  if (!memberId) {
+    return null;
+  }
+
+  for (
+    const ticketId of
+    Object.keys(randomTickets)
+  ) {
+
+    const ticket =
+      randomTickets[ticketId];
+
+    if (
+      ticket &&
+      !ticket.matched &&
+      ticket.memberId === memberId
+    ) {
+      return ticketId;
+    }
+
+  }
+
+  return null;
+
 }
 
 function createInitialRoom(type = "manual") {
@@ -564,6 +597,37 @@ function applyRandomMatchReward(room) {
 
   }
 
+  /*
+    万一マッチング処理をすり抜けても、
+    同一アカウント同士には報酬を付与しない
+  */
+  if (
+    attackParticipant.memberId ===
+    defenseParticipant.memberId
+  ) {
+
+    room.rewardAppliedThisMatch =
+      true;
+
+    room.rewardResult = {
+      applied: false,
+      reason: "same_member_id",
+
+      rewardMatchCount:
+        room.rewardMatchCount,
+
+      rewardRemainingCount:
+        Math.max(
+          0,
+          RANDOM_REWARD_LIMIT_PER_ROOM -
+          room.rewardMatchCount
+        )
+    };
+
+    return room.rewardResult;
+
+  }
+
   const attackScore =
     room.totalScore.attack;
 
@@ -752,28 +816,82 @@ app.post("/api/leave-room/:roomId", (req, res) => {
    ランダムマッチ開始
 ===================== */
 app.post("/api/random-match", (req, res) => {
+
   cleanupRandomTickets();
   cleanupRooms();
 
-  const { clientId } = req.body;
+  const clientId =
+    typeof req.body?.clientId === "string"
+      ? req.body.clientId.trim()
+      : "";
 
   const member =
     normalizeMemberInfo(req.body);
-  
+
   if (!clientId) {
     return res.status(400).json({
       error: "clientId is required"
     });
   }
 
+  if (!member.memberId) {
+    return res.status(401).json({
+      error: "Login is required",
+      reason: "missing_member_id"
+    });
+  }
+
   // 同じclientがすでに待機中なら、新しいticketを作らず既存ticketを返す
   const existingWaitingTicketId =
-    findWaitingTicketByClientId(clientId);
+    findWaitingTicketByClientId(
+      clientId
+    );
 
   if (existingWaitingTicketId) {
+
+    const existingTicket =
+      randomTickets[
+        existingWaitingTicketId
+      ];
+
+    /*
+      同じブラウザ識別子なのに
+      memberIdが変わっている場合は拒否
+    */
+    if (
+      existingTicket.memberId !==
+      member.memberId
+    ) {
+      return res.status(403).json({
+        error: "Ticket owner mismatch",
+        reason: "ticket_owner_mismatch"
+      });
+    }
+
     return res.json({
       matched: false,
-      ticketId: existingWaitingTicketId
+      ticketId:
+        existingWaitingTicketId
+    });
+
+  }
+
+  /*
+    別タブ・別ブラウザであっても、
+    同じアカウントがすでに待機中なら
+    新しい待機チケットを作らない
+  */
+  const existingMemberTicketId =
+    findWaitingTicketByMemberId(
+      member.memberId
+    );
+
+  if (existingMemberTicketId) {
+    return res.status(409).json({
+      error:
+        "This account is already waiting",
+      reason:
+        "same_member_already_waiting"
     });
   }
 
@@ -818,6 +936,24 @@ app.post("/api/random-match", (req, res) => {
 
   const firstTicket =
     randomTickets[firstTicketId];
+
+  /*
+    同一Wixアカウント同士は
+    ランダムマッチさせない
+  */
+  if (
+    firstTicket &&
+    firstTicket.memberId ===
+    member.memberId
+  ) {
+    return res.status(409).json({
+      matched: false,
+      error:
+        "You cannot match with the same account",
+      reason:
+        "same_member_id"
+    });
+  }
 
   // 念のため、待機者が自分自身ならマッチさせない
   if (
@@ -2231,6 +2367,21 @@ app.post(
       return res.json({
         eligible: false,
         reason: "not_random_match"
+      });
+    }
+
+    /*
+      同一アカウント同士のRoomでは
+      報酬請求も拒否する
+    */
+    if (
+      room.participants.attack.memberId &&
+      room.participants.attack.memberId ===
+      room.participants.defense.memberId
+    ) {
+      return res.json({
+        eligible: false,
+        reason: "same_member_id"
       });
     }
 
