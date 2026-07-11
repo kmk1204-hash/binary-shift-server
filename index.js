@@ -9,12 +9,6 @@ const rooms = {};
 let waitingRandomTicketId = null;
 const randomTickets = {};
 
-/*
-  第18回③で報酬処理を整理するまでは一時的に残す。
-  新規のアカウント保存には使用しない。
-*/
-const accounts = {};
-
 const RANDOM_TICKET_TTL_MS =
   1000 * 60 * 3; // 3分
 
@@ -24,8 +18,6 @@ const ROOM_TTL_MS =
 const RANDOM_REWARD_LIMIT_PER_ROOM =
   3;
 
-const DEFAULT_PROFILE_ICON =
-  "icon_01";
 
 function cleanupRandomTickets() {
   const now = Date.now();
@@ -148,80 +140,6 @@ function normalizeMemberInfo(body = {}) {
   return {
     memberId,
     userName
-  };
-
-}
-
-/* =====================
-   Account
-===================== */
-
-function createDefaultAccount(memberId, userName) {
-
-  return {
-    memberId,
-
-    userName: userName || "Guest",
-
-    profileIcon: DEFAULT_PROFILE_ICON,
-
-    point: 0,
-
-    win: 0,
-
-    lose: 0,
-
-    draw: 0,
-
-    createdAt: Date.now(),
-
-    lastLogin: Date.now()
-  };
-
-}
-
-function ensureAccount(memberId, userName) {
-
-  if (!memberId) {
-    return null;
-  }
-
-  if (!accounts[memberId]) {
-
-    accounts[memberId] =
-      createDefaultAccount(memberId, userName);
-
-  } else {
-
-    accounts[memberId].userName =
-      userName || accounts[memberId].userName;
-
-    accounts[memberId].lastLogin =
-      Date.now();
-
-  }
-
-  return accounts[memberId];
-
-}
-
-function toPublicAccount(account) {
-
-  if (!account) {
-    return null;
-  }
-
-  return {
-    memberId: account.memberId,
-    userName: account.userName,
-    profileIcon:
-      account.profileIcon || DEFAULT_PROFILE_ICON,
-    point: account.point,
-    win: account.win,
-    lose: account.lose,
-    draw: account.draw,
-    createdAt: account.createdAt,
-    lastLogin: account.lastLogin
   };
 
 }
@@ -580,10 +498,17 @@ function applyRandomMatchReward(room) {
     return null;
   }
 
+  /*
+    同じ試合で報酬計算済みの場合は、
+    保存済みの結果をそのまま返す
+  */
   if (room.rewardAppliedThisMatch) {
     return room.rewardResult;
   }
 
+  /*
+    ルーム対戦は報酬対象外
+  */
   if (room.type !== "random") {
 
     room.rewardAppliedThisMatch = true;
@@ -597,6 +522,9 @@ function applyRandomMatchReward(room) {
 
   }
 
+  /*
+    同一Roomでの報酬対象は最大3試合
+  */
   if (
     room.rewardMatchCount >=
     RANDOM_REWARD_LIMIT_PER_ROOM
@@ -607,7 +535,10 @@ function applyRandomMatchReward(room) {
     room.rewardResult = {
       applied: false,
       reason: "reward_limit_reached",
-      rewardMatchCount: room.rewardMatchCount,
+
+      rewardMatchCount:
+        room.rewardMatchCount,
+
       rewardRemainingCount: 0
     };
 
@@ -621,6 +552,10 @@ function applyRandomMatchReward(room) {
   const defenseParticipant =
     room.participants.defense;
 
+  /*
+    Wix DataのAccountと紐づけるため、
+    両者のmemberIdが必要
+  */
   if (
     !attackParticipant?.memberId ||
     !defenseParticipant?.memberId
@@ -643,46 +578,15 @@ function applyRandomMatchReward(room) {
   const defenseScore =
     room.totalScore.defense;
 
+  /*
+    報酬の計算だけを行う。
+    Express内のAccountは更新しない。
+  */
   const reward =
     calculateRandomMatchReward(
       attackScore,
       defenseScore
     );
-
-  const attackAccount =
-    ensureAccount(
-      attackParticipant.memberId,
-      attackParticipant.userName
-    );
-
-  const defenseAccount =
-    ensureAccount(
-      defenseParticipant.memberId,
-      defenseParticipant.userName
-    );
-
-  attackAccount.point +=
-    reward.attackPoint;
-
-  defenseAccount.point +=
-    reward.defensePoint;
-
-  if (reward.winner === "draw") {
-
-    attackAccount.draw++;
-    defenseAccount.draw++;
-
-  } else if (reward.winner === "attack") {
-
-    attackAccount.win++;
-    defenseAccount.lose++;
-
-  } else {
-
-    defenseAccount.win++;
-    attackAccount.lose++;
-
-  }
 
   room.rewardMatchCount++;
 
@@ -690,27 +594,40 @@ function applyRandomMatchReward(room) {
     true;
 
   room.rewardResult = {
+
     applied: true,
-    winner: reward.winner,
-    diff: reward.diff,
+
+    winner:
+      reward.winner,
+
+    diff:
+      reward.diff,
 
     attackScore,
+
     defenseScore,
 
-    attackPoint: reward.attackPoint,
-    defensePoint: reward.defensePoint,
+    attackPoint:
+      reward.attackPoint,
 
-    rewardMatchCount: room.rewardMatchCount,
-    rewardRemainingCount: Math.max(
-      0,
-      RANDOM_REWARD_LIMIT_PER_ROOM - room.rewardMatchCount
-    )
+    defensePoint:
+      reward.defensePoint,
+
+    rewardMatchCount:
+      room.rewardMatchCount,
+
+    rewardRemainingCount:
+      Math.max(
+        0,
+        RANDOM_REWARD_LIMIT_PER_ROOM -
+        room.rewardMatchCount
+      )
+
   };
 
   return room.rewardResult;
 
 }
-
 /* =====================
    ルーム作成
 ===================== */
