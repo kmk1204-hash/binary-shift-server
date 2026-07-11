@@ -19,6 +19,8 @@ const RANDOM_REWARD_LIMIT_PER_ROOM = 3;
 
 const DEFAULT_PROFILE_ICON = "icon_01";
 
+const RANKING_LIMIT = 100;
+
 const PROFILE_ICON_IDS = [
   "icon_01",
   "icon_02",
@@ -227,6 +229,145 @@ function toPublicAccount(account) {
 }
 
 /* =====================
+   Ranking
+===================== */
+
+function getTotalMatches(account) {
+
+  return (
+    (account.win ?? 0) +
+    (account.lose ?? 0) +
+    (account.draw ?? 0)
+  );
+
+}
+
+function calculateWinRate(account) {
+
+  const total =
+    getTotalMatches(account);
+
+  if (total === 0) {
+    return 0;
+  }
+
+  return Math.round(
+    ((account.win ?? 0) / total) * 1000
+  ) / 10;
+
+}
+
+function createRankedAccounts() {
+
+  const accountList =
+    Object.values(accounts)
+      .filter(account => account && account.memberId)
+      .sort((a, b) => {
+
+        const pointDiff =
+          (b.point ?? 0) - (a.point ?? 0);
+
+        if (pointDiff !== 0) {
+          return pointDiff;
+        }
+
+        const winRateDiff =
+          calculateWinRate(b) -
+          calculateWinRate(a);
+
+        if (winRateDiff !== 0) {
+          return winRateDiff;
+        }
+
+        const winDiff =
+          (b.win ?? 0) - (a.win ?? 0);
+
+        if (winDiff !== 0) {
+          return winDiff;
+        }
+
+        return String(a.userName || "")
+          .localeCompare(String(b.userName || ""));
+
+      });
+
+  let previousPoint =
+    null;
+
+  let previousRank =
+    0;
+
+  return accountList.map((account, index) => {
+
+    const point =
+      account.point ?? 0;
+
+    let rank;
+
+    if (previousPoint === point) {
+
+      rank =
+        previousRank;
+
+    } else {
+
+      rank =
+        index + 1;
+
+      previousPoint =
+        point;
+
+      previousRank =
+        rank;
+
+    }
+
+    return {
+      account,
+      rank
+    };
+
+  });
+
+}
+
+function toPublicRankingEntry(rankedAccount, viewerMemberId = null) {
+
+  const account =
+    rankedAccount.account;
+
+  return {
+    rank: rankedAccount.rank,
+
+    isYou:
+      !!viewerMemberId &&
+      account.memberId === viewerMemberId,
+
+    profileIcon:
+      account.profileIcon || DEFAULT_PROFILE_ICON,
+
+    userName:
+      account.userName || "Guest",
+
+    point:
+      account.point ?? 0,
+
+    winRate:
+      calculateWinRate(account),
+
+    win:
+      account.win ?? 0,
+
+    lose:
+      account.lose ?? 0,
+
+    draw:
+      account.draw ?? 0
+  };
+
+}
+
+/* =====================
    Public Participants
 ===================== */
 
@@ -385,6 +526,57 @@ function createInitialRoom(type = "manual") {
   };
 
 }
+
+app.get("/api/ranking", (req, res) => {
+
+  const viewerMemberId =
+    typeof req.query.memberId === "string"
+      ? req.query.memberId
+      : null;
+
+  const rankedAccounts =
+    createRankedAccounts();
+
+  const topRankings =
+    rankedAccounts
+      .slice(0, RANKING_LIMIT)
+      .map(rankedAccount =>
+        toPublicRankingEntry(
+          rankedAccount,
+          viewerMemberId
+        )
+      );
+
+  let selfRanking =
+    null;
+
+  if (viewerMemberId) {
+
+    const selfRankedAccount =
+      rankedAccounts.find(rankedAccount =>
+        rankedAccount.account.memberId === viewerMemberId
+      );
+
+    if (selfRankedAccount) {
+
+      selfRanking =
+        toPublicRankingEntry(
+          selfRankedAccount,
+          viewerMemberId
+        );
+
+    }
+
+  }
+
+  res.json({
+    top: topRankings,
+    self: selfRanking,
+    limit: RANKING_LIMIT,
+    totalPlayers: rankedAccounts.length
+  });
+
+});
 
 function getRolePlayer(room, role) {
   return room.players[role];
