@@ -226,6 +226,44 @@ function toPublicAccount(account) {
 
 }
 
+/* =====================
+   Public Participants
+===================== */
+
+function createPublicParticipants(room, viewerPlayerId) {
+
+  const attackIsYou =
+    room.participants.attack.playerId === viewerPlayerId;
+
+  const defenseIsYou =
+    room.participants.defense.playerId === viewerPlayerId;
+
+  return {
+    attack: {
+      playerId: attackIsYou
+        ? room.participants.attack.playerId
+        : null,
+
+      isYou: attackIsYou,
+
+      joined:
+        !!room.participants.attack.playerId
+    },
+
+    defense: {
+      playerId: defenseIsYou
+        ? room.participants.defense.playerId
+        : null,
+
+      isYou: defenseIsYou,
+
+      joined:
+        !!room.participants.defense.playerId
+    }
+  };
+
+}
+
 function normalizeProfileUpdate(body = {}) {
 
   const userName =
@@ -1183,6 +1221,17 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
   room.lastAccess = Date.now();
 
+  const viewerPlayerId =
+    typeof req.query.playerId === "string"
+      ? req.query.playerId
+      : null;
+
+  const publicParticipants =
+    createPublicParticipants(
+      room,
+      viewerPlayerId
+    );
+
   /* =====================
      現在の攻守プレイヤー取得
   ===================== */
@@ -1248,7 +1297,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
       roles: room.roles,
 
-      participants: room.participants,
+      participants: publicParticipants,
 
       result: {
 
@@ -1301,7 +1350,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
 
     roles: room.roles,
 
-    participants: room.participants,
+    participants: publicParticipants,
 
     battleState: room.battleState,
 
