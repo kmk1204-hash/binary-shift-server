@@ -714,21 +714,20 @@ function applyRandomMatchReward(room) {
 /* =====================
    ルーム作成
 ===================== */
+
 app.post("/api/create-room", (req, res) => {
 
-  const roomId = generateRoomId();
+  const roomId =
+    generateRoomId();
 
-  const room = createInitialRoom("manual");
+  const room =
+    createInitialRoom("manual");
 
-  const playerId = generatePlayerId();
+  const playerId =
+    generatePlayerId();
 
   const member =
     normalizeMemberInfo(req.body);
-
-  ensureAccount(
-    member.memberId,
-    member.userName
-  );
 
   room.participants.attack.playerId =
     playerId;
@@ -739,7 +738,8 @@ app.post("/api/create-room", (req, res) => {
   room.participants.attack.userName =
     member.userName;
 
-  rooms[roomId] = room;
+  rooms[roomId] =
+    room;
 
   res.json({
     roomId,
@@ -749,12 +749,16 @@ app.post("/api/create-room", (req, res) => {
   });
 
 });
+
+
 /* =====================
    ルーム参加
 ===================== */
+
 app.post("/api/join-room/:roomId", (req, res) => {
 
-  const room = rooms[req.params.roomId];
+  const room =
+    rooms[req.params.roomId];
 
   if (!room) {
     return res.status(404).json({
@@ -762,7 +766,9 @@ app.post("/api/join-room/:roomId", (req, res) => {
     });
   }
 
-  if (room.participants.defense.playerId !== null) {
+  if (
+    room.participants.defense.playerId !== null
+  ) {
     return res.status(400).json({
       error: "Room is full"
     });
@@ -773,11 +779,6 @@ app.post("/api/join-room/:roomId", (req, res) => {
 
   const member =
     normalizeMemberInfo(req.body);
-
-  ensureAccount(
-    member.memberId,
-    member.userName
-  );
 
   room.participants.defense.playerId =
     playerId;
@@ -796,6 +797,8 @@ app.post("/api/join-room/:roomId", (req, res) => {
   });
 
 });
+
+
 /* =====================
    Room離脱
 ===================== */
@@ -858,12 +861,7 @@ app.post("/api/random-match", (req, res) => {
 
   const member =
     normalizeMemberInfo(req.body);
-
-  ensureAccount(
-    member.memberId,
-    member.userName
-  );
-
+  
   if (!clientId) {
     return res.status(400).json({
       error: "clientId is required"
