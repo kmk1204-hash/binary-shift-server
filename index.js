@@ -131,15 +131,8 @@ function normalizeMemberInfo(body = {}) {
       ? body.memberId.trim()
       : null;
 
-  const userName =
-    typeof body.memberName === "string" &&
-    body.memberName.trim() !== ""
-      ? body.memberName.trim().slice(0, 24)
-      : "Guest";
-
   return {
-    memberId,
-    userName
+    memberId
   };
 
 }
@@ -243,13 +236,11 @@ function createInitialRoom(type = "manual") {
     participants: {
       attack: {
         playerId: null,
-        memberId: null,
-        userName: "Guest"
+        memberId: null
       },
       defense: {
         playerId: null,
-        memberId: null,
-        userName: "Guest"
+        memberId: null
       }
     },
 
@@ -384,6 +375,7 @@ function createEmptyOpenInfo() {
   };
 
 }
+
 function countCards(cards) {
   return {
     zeroCount: cards.filter(c => c === 0).length,
@@ -652,17 +644,12 @@ app.post("/api/create-room", (req, res) => {
   room.participants.attack.memberId =
     member.memberId;
 
-  room.participants.attack.userName =
-    member.userName;
-
   rooms[roomId] =
     room;
 
   res.json({
     roomId,
-    playerId,
-    memberId: member.memberId,
-    userName: member.userName
+    playerId
   });
 
 });
@@ -703,18 +690,12 @@ app.post("/api/join-room/:roomId", (req, res) => {
   room.participants.defense.memberId =
     member.memberId;
 
-  room.participants.defense.userName =
-    member.userName;
-
   res.json({
     success: true,
-    playerId,
-    memberId: member.memberId,
-    userName: member.userName
+    playerId
   });
 
 });
-
 
 /* =====================
    Room離脱
@@ -820,10 +801,8 @@ app.post("/api/random-match", (req, res) => {
       role: null,
       playerId: null,
       memberId: member.memberId,
-      userName: member.userName,
       createdAt: Date.now()
     };
-
     waitingRandomTicketId =
       ticketId;
 
@@ -864,7 +843,6 @@ app.post("/api/random-match", (req, res) => {
       role: null,
       playerId: null,
       memberId: member.memberId,
-      userName: member.userName,
       createdAt: Date.now()
     };
 
@@ -889,7 +867,6 @@ app.post("/api/random-match", (req, res) => {
     role: null,
     playerId: null,
     memberId: member.memberId,
-    userName: member.userName,
     createdAt: Date.now()
   };
 
@@ -911,17 +888,11 @@ app.post("/api/random-match", (req, res) => {
   room.participants.attack.memberId =
     firstTicket.memberId;
 
-  room.participants.attack.userName =
-    firstTicket.userName || "Guest";
-
   room.participants.defense.playerId =
     defensePlayerId;
 
   room.participants.defense.memberId =
     member.memberId;
-
-  room.participants.defense.userName =
-    member.userName;
 
   rooms[roomId] =
     room;
@@ -954,7 +925,6 @@ app.post("/api/random-match", (req, res) => {
     role: "defense",
     playerId: defensePlayerId,
     memberId: member.memberId,
-    userName: member.userName
   });
 });
 
