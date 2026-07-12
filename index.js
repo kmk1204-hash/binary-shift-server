@@ -3144,128 +3144,399 @@ app.post(
 /* =====================
    読み替え
 ===================== */
-app.post("/api/replace/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  const { role, index } = req.body;
-  const bs = room.battleState;
 
-  function hasOwnPlacedCard(bs, index, role) {
-    for (let i = 0; i < 3; i++) {
-      if (bs.pointArea[index + i].placedBy === role) {
-        return true;
+app.post(
+  "/api/replace/:roomId",
+  (req, res) => {
+
+    const room =
+      rooms[req.params.roomId];
+
+    if (!room) {
+
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
+
+    }
+
+    if (
+      room.phase !== "replace_attack" &&
+      room.phase !== "replace_defense"
+    ) {
+
+      return res.status(400).json({
+        error: "Invalid phase",
+        reason: "invalid_phase"
+      });
+
+    }
+
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    const role =
+      auth.access.role;
+
+    const index =
+      Number(
+        req.body?.index
+      );
+
+    const bs =
+      room.battleState;
+
+    if (!bs) {
+
+      return res.status(400).json({
+        error: "Battle state not found",
+        reason: "battle_state_not_found"
+      });
+
+    }
+
+    function hasOwnPlacedCard(
+      battleState,
+      startIndex,
+      targetRole
+    ) {
+
+      for (
+        let i = 0;
+        i < 3;
+        i++
+      ) {
+
+        const point =
+          battleState.pointArea[
+            startIndex + i
+          ];
+
+        if (
+          point?.placedBy ===
+          targetRole
+        ) {
+          return true;
+        }
+
       }
-    }
-    return false;
-  }
 
-  // =====================
-  // スキップ
-  // =====================
-  if (index === -1) {
-    if (room.phase === "replace_attack") {
-      room.phase = "replace_defense";
-      bs.currentRole = "defense";
-      room.lastReplaceIndex = null;
+      return false;
+
+    }
+
+    /* =====================
+       Attack replace phase
+    ===================== */
+
+    if (
+      room.phase ===
+      "replace_attack"
+    ) {
+
+      if (
+        role !==
+        "attack"
+      ) {
+
+        return res.status(403).json({
+          error: "Not your turn",
+          reason: "not_your_turn"
+        });
+
+      }
+
+      /*
+        スキップ
+      */
+
+      if (
+        index === -1
+      ) {
+
+        room.phase =
+          "replace_defense";
+
+        bs.currentRole =
+          "defense";
+
+        room.lastReplaceIndex =
+          null;
+
+        return res.json({
+          success: true,
+
+          phase:
+            room.phase,
+
+          battleState:
+            bs,
+
+          lastReplaceIndex:
+            room.lastReplaceIndex
+        });
+
+      }
+
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index > 3
+      ) {
+
+        return res.status(400).json({
+          error: "Invalid index",
+          reason: "invalid_index"
+        });
+
+      }
+
+      const binary =
+        bs.pointArea
+          .map(point =>
+            point.card
+          )
+          .join("");
+
+      if (
+        binary.substr(
+          index,
+          3
+        ) !== "000"
+      ) {
+
+        return res.status(400).json({
+          error: "Invalid pattern",
+          reason: "invalid_pattern"
+        });
+
+      }
+
+      if (
+        !hasOwnPlacedCard(
+          bs,
+          index,
+          "attack"
+        )
+      ) {
+
+        return res.status(400).json({
+          error: "No own placed card",
+          reason: "no_own_placed_card"
+        });
+
+      }
+
+      for (
+        let i = 0;
+        i < 3;
+        i++
+      ) {
+
+        bs.pointArea[
+          index + i
+        ].card = "1";
+
+      }
+
+      room.lastReplaceIndex =
+        index;
+
+      room.phase =
+        "replace_defense";
+
+      bs.currentRole =
+        "defense";
 
       return res.json({
         success: true,
-        phase: room.phase,
-        battleState: bs,
-        lastReplaceIndex: room.lastReplaceIndex
+
+        phase:
+          room.phase,
+
+        battleState:
+          bs,
+
+        lastReplaceIndex:
+          room.lastReplaceIndex
       });
+
     }
 
-    if (room.phase === "replace_defense") {
-      bs.currentRole = null;
-      room.lastReplaceIndex = null;
-      finalizeRound(room);
+    /* =====================
+       Defense replace phase
+    ===================== */
+
+    if (
+      room.phase ===
+      "replace_defense"
+    ) {
+
+      if (
+        role !==
+        "defense"
+      ) {
+
+        return res.status(403).json({
+          error: "Not your turn",
+          reason: "not_your_turn"
+        });
+
+      }
+
+      /*
+        スキップ
+      */
+
+      if (
+        index === -1
+      ) {
+
+        bs.currentRole =
+          null;
+
+        room.lastReplaceIndex =
+          null;
+
+        finalizeRound(
+          room
+        );
+
+        return res.json({
+          success: true,
+
+          phase:
+            room.phase,
+
+          battleState:
+            bs,
+
+          lastReplaceIndex:
+            null
+        });
+
+      }
+
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index > 3
+      ) {
+
+        return res.status(400).json({
+          error: "Invalid index",
+          reason: "invalid_index"
+        });
+
+      }
+
+      if (
+        index ===
+        room.lastReplaceIndex
+      ) {
+
+        return res.status(400).json({
+          error:
+            "Same position not allowed",
+
+          reason:
+            "same_position_not_allowed"
+        });
+
+      }
+
+      const binary =
+        bs.pointArea
+          .map(point =>
+            point.card
+          )
+          .join("");
+
+      if (
+        binary.substr(
+          index,
+          3
+        ) !== "111"
+      ) {
+
+        return res.status(400).json({
+          error: "Invalid pattern",
+          reason: "invalid_pattern"
+        });
+
+      }
+
+      if (
+        !hasOwnPlacedCard(
+          bs,
+          index,
+          "defense"
+        )
+      ) {
+
+        return res.status(400).json({
+          error: "No own placed card",
+          reason: "no_own_placed_card"
+        });
+
+      }
+
+      for (
+        let i = 0;
+        i < 3;
+        i++
+      ) {
+
+        bs.pointArea[
+          index + i
+        ].card = "0";
+
+      }
+
+      bs.currentRole =
+        null;
+
+      room.lastReplaceIndex =
+        null;
+
+      finalizeRound(
+        room
+      );
 
       return res.json({
         success: true,
-        phase: room.phase,
-        battleState: bs,
-        lastReplaceIndex: null
+
+        phase:
+          room.phase,
+
+        battleState:
+          bs,
+
+        lastReplaceIndex:
+          null
       });
-    }
-  }
 
-  if (index < 0 || index > 3) {
-    return res.status(400).json({ error: "Invalid index" });
-  }
-
-  const binary = bs.pointArea.map(p => p.card).join("");
-
-  // =====================
-  // attack
-  // =====================
-  if (room.phase === "replace_attack") {
-    if (role !== "attack") {
-      return res.status(400).json({ error: "Not turn" });
     }
 
-    if (binary.substr(index, 3) !== "000") {
-      return res.status(400).json({ error: "Invalid pattern" });
-    }
-
-    if (!hasOwnPlacedCard(bs, index, "attack")) {
-      return res.status(400).json({ error: "No own placed card" });
-    }
-
-    for (let i = 0; i < 3; i++) {
-      bs.pointArea[index + i].card = "1";
-    }
-
-    room.lastReplaceIndex = index;
-    room.phase = "replace_defense";
-    bs.currentRole = "defense";
-
-    return res.json({
-      success: true,
-      phase: room.phase,
-      battleState: bs,
-      lastReplaceIndex: room.lastReplaceIndex
+    return res.status(400).json({
+      error: "Invalid phase",
+      reason: "invalid_phase"
     });
+
   }
-
-  // =====================
-  // defense
-  // =====================
-  if (room.phase === "replace_defense") {
-    if (role !== "defense") {
-      return res.status(400).json({ error: "Not turn" });
-    }
-
-    if (index === room.lastReplaceIndex) {
-      return res.status(400).json({ error: "Same position not allowed" });
-    }
-
-    if (binary.substr(index, 3) !== "111") {
-      return res.status(400).json({ error: "Invalid pattern" });
-    }
-
-    if (!hasOwnPlacedCard(bs, index, "defense")) {
-      return res.status(400).json({ error: "No own placed card" });
-    }
-
-    for (let i = 0; i < 3; i++) {
-      bs.pointArea[index + i].card = "0";
-    }
-
-    bs.currentRole = null;
-    room.lastReplaceIndex = null;
-
-    finalizeRound(room);
-
-    return res.json({
-      success: true,
-      phase: room.phase,
-      battleState: bs,
-      lastReplaceIndex: null
-    });
-  }
-
-  return res.status(400).json({ error: "Invalid phase" });
-});
+);
 
 /* =====================
    ラウンド終了
