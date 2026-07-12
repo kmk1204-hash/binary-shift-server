@@ -3601,89 +3601,145 @@ function finalizeRound(room) {
 }
 
 /* =====================
-   次ラウンド
+   次ラウンド準備
 ===================== */
-app.post("/api/next-round/:roomId", (req, res) => {
 
-  const room = rooms[req.params.roomId];
+app.post(
+  "/api/next-round/:roomId",
+  (req, res) => {
 
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
-    });
-  }
+    const room =
+      rooms[req.params.roomId];
 
-  if (room.phase !== "round_result") {
-    return res.status(400).json({
-      error: "Not round_result"
-    });
-  }
+    if (!room) {
 
-  if (!room.nextRoundReady) {
-    room.nextRoundReady = {
-      attack: false,
-      defense: false
-    };
-  }
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
 
-  const { role } = req.body;
+    }
 
-  if (
-    role !== "attack" &&
-    role !== "defense"
-  ) {
-    return res.status(400).json({
-      error: "Invalid role"
-    });
-  }
+    if (
+      room.phase !==
+      "round_result"
+    ) {
 
-  room.nextRoundReady[role] = true;
+      return res.status(400).json({
+        error: "Not round result phase",
+        reason: "invalid_phase"
+      });
 
-  /* =====================
-     相手待ち
-  ===================== */
+    }
 
-  if (
-    !room.nextRoundReady.attack ||
-    !room.nextRoundReady.defense
-  ) {
+    /*
+      playerIdから本人と現在のRoleを判定
+    */
+
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    const role =
+      auth.access.role;
+
+    /*
+      ready状態がない場合の保険
+    */
+
+    if (!room.nextRoundReady) {
+
+      room.nextRoundReady = {
+        attack: false,
+        defense: false
+      };
+
+    }
+
+    /*
+      サーバーが判定した現在Roleを
+      ready状態へ反映
+    */
+
+    room.nextRoundReady[role] =
+      true;
+
+    /*
+      片方だけ準備完了
+    */
+
+    if (
+      !room.nextRoundReady.attack ||
+      !room.nextRoundReady.defense
+    ) {
+
+      return res.json({
+        success: true,
+
+        waiting: true,
+
+        role,
+
+        phase:
+          room.phase,
+
+        nextRoundReady:
+          room.nextRoundReady
+      });
+
+    }
+
+    /*
+      両者準備完了
+      Round2へ移行
+    */
+
+    room.round =
+      2;
+
+    swapRoles(
+      room
+    );
+
+    resetRoomForBuild(
+      room
+    );
+
+    room.nextRoundReady =
+      null;
 
     return res.json({
       success: true,
-      waiting: true,
-      phase: room.phase,
-      nextRoundReady: room.nextRoundReady
+
+      waiting: false,
+
+      role,
+
+      phase:
+        room.phase,
+
+      round:
+        room.round,
+
+      roles:
+        room.roles,
+
+      nextRoundReady:
+        room.nextRoundReady
     });
 
   }
-
-  /* =====================
-     Round2開始
-  ===================== */
-
-  room.round = 2;
-
-  // 現在の攻守を入れ替える
-  swapRoles(room);
-
-  // Build開始用リセット
-  resetRoomForBuild(room);
-
-  return res.json({
-
-    success: true,
-
-    waiting: false,
-
-    phase: room.phase,
-
-    round: room.round,
-
-    roles: room.roles
-
-  });
-
-});
+);
 
 /* =====================
    Match End Choice
