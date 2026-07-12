@@ -2533,161 +2533,613 @@ app.post(
 /* =====================
    Battle（step1〜6）
 ===================== */
-app.post("/api/attack/place/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
-  if (room.phase !== "battle") {
-    return res.status(400).json({ error: "Not battle phase" });
-  }
 
-  const bs = room.battleState;
-  const { role, cardIndex, face, position } = req.body;
+app.post(
+  "/api/attack/place/:roomId",
+  (req, res) => {
 
-  const reverseFace = f => (f === "表" ? "伏せ" : "表");
+    const room =
+      rooms[req.params.roomId];
 
-  const place = (
-    card,
-    owner,
-    faceValue,
-    pos,
-    placedBy = bs.currentRole
-  ) => {
+    if (!room) {
 
-    if (bs.pointArea[pos]) {
-      throw new Error("Position filled");
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
+
     }
 
-    bs.pointArea[pos] = {
+    if (
+      room.phase !==
+      "battle"
+    ) {
+
+      return res.status(400).json({
+        error: "Not battle phase",
+        reason: "invalid_phase"
+      });
+
+    }
+
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    const role =
+      auth.access.role;
+
+    const bs =
+      room.battleState;
+
+    if (!bs) {
+
+      return res.status(400).json({
+        error: "Battle state not found",
+        reason: "battle_state_not_found"
+      });
+
+    }
+
+    const cardIndex =
+      Number(
+        req.body?.cardIndex
+      );
+
+    const face =
+      req.body?.face;
+
+    const position =
+      Number(
+        req.body?.position
+      );
+
+    if (
+      !Number.isInteger(
+        cardIndex
+      )
+    ) {
+
+      return res.status(400).json({
+        error: "Invalid card index",
+        reason: "invalid_card_index"
+      });
+
+    }
+
+    if (
+      face !== "表" &&
+      face !== "伏せ"
+    ) {
+
+      return res.status(400).json({
+        error: "Invalid face",
+        reason: "invalid_face"
+      });
+
+    }
+
+    if (
+      !Number.isInteger(
+        position
+      ) ||
+      position < 0 ||
+      position > 5
+    ) {
+
+      return res.status(400).json({
+        error: "Invalid position",
+        reason: "invalid_position"
+      });
+
+    }
+
+    const reverseFace =
+      value =>
+        value === "表"
+          ? "伏せ"
+          : "表";
+
+    const place = (
       card,
       owner,
-      face: faceValue,
-      placedBy
-    };
+      faceValue,
+      pos,
+      placedBy = bs.currentRole
+    ) => {
 
-  };
-
-  try {
-
-    /* ===== step1 ===== */
-    if (bs.step === 1) {
-      if (role !== "attack") throw new Error("Not your turn");
-      if (position !== 0) throw new Error("Must left");
-
-      const c = bs.attackHand[cardIndex];
-      if (!c) throw new Error("Invalid card");
-
-      place(c.value, "attack", face, 0);
-      bs.attackHand.splice(cardIndex, 1);
-
-      bs.forcedFace = reverseFace(face);
-      bs.currentRole = "defense";
-      bs.step = 2;
-
-      return res.json({ success: true, battleState: bs });
-    }
-
-    /* ===== step2 ===== */
-    if (bs.step === 2) {
-      if (role !== "defense") throw new Error("Not your turn");
-      if (face !== bs.forcedFace) throw new Error("Forced");
-
-      const c = bs.attackHand[cardIndex];
-      if (!c) throw new Error("Invalid card");
-
-      place(c.value, "attack", face, position);
-      bs.attackHand.splice(cardIndex, 1);
-
-      bs.forcedFace = null;
-      bs.currentRole = "defense";
-      bs.step = 3;
-
-      return res.json({ success: true, battleState: bs });
-    }
-
-    /* ===== step3 ===== */
-    if (bs.step === 3) {
-      if (role !== "defense") throw new Error("Not your turn");
-
-      const c = bs.defenseHand[cardIndex];
-      if (!c) throw new Error("Invalid card");
-
-      place(c.value, "defense", face, position);
-      bs.defenseHand.splice(cardIndex, 1);
-
-      bs.forcedFace = reverseFace(face);
-      bs.currentRole = "attack";
-      bs.step = 4;
-
-      return res.json({ success: true, battleState: bs });
-    }
-
-    /* ===== step4 ===== */
-    if (bs.step === 4) {
-      if (role !== "attack") throw new Error("Not your turn");
-      if (face !== bs.forcedFace) throw new Error("Forced");
-
-      const c = bs.defenseHand[cardIndex];
-      if (!c) throw new Error("Invalid card");
-
-      place(c.value, "defense", face, position);
-      bs.defenseHand.splice(cardIndex, 1);
-
-      bs.forcedFace = null;
-      bs.currentRole = "attack";
-      bs.step = 5;
-
-      return res.json({ success: true, battleState: bs });
-    }
-
-    /* ===== step5（＋step6統合） ===== */
-    if (bs.step === 5) {
-      if (role !== "attack") throw new Error("Not your turn");
-
-      const combined = [...bs.attackHand, ...bs.defenseHand];
-      const c = combined[cardIndex];
-      if (!c) throw new Error("Invalid card");
-
-      // 5枚目配置
-      place(c.value, c.owner, face, position);
-
-      if (c.owner === "attack") {
-        bs.attackHand = bs.attackHand.filter(x => x !== c);
-      } else {
-        bs.defenseHand = bs.defenseHand.filter(x => x !== c);
+      if (
+        pos < 0 ||
+        pos >=
+          bs.pointArea.length
+      ) {
+        throw new Error(
+          "Invalid position"
+        );
       }
 
-      // ===== 自動配置（旧step6） =====
-      const lastCard = bs.attackHand[0] || bs.defenseHand[0];
-      if (!lastCard) throw new Error("No card");
-      const owner = lastCard.owner;
-      const pos = bs.pointArea.findIndex(p => !p);
-      if (pos === -1) throw new Error("No empty position");
+      if (
+        bs.pointArea[pos]
+      ) {
+        throw new Error(
+          "Position filled"
+        );
+      }
 
-      place(
-        lastCard.value,
+      bs.pointArea[pos] = {
+        card,
         owner,
-        "表",
-        pos,
-        "defense"
-      );
-      // 手札クリア
-      bs.attackHand = [];
-      bs.defenseHand = [];
+        face:
+          faceValue,
+        placedBy
+      };
 
-      // replaceへ
-      room.phase = "replace_attack";
+    };
 
-      return res.json({
-        success: true,
-        phase: room.phase,
-        battleState: bs
+    try {
+
+      /* =====================
+         共通手番確認
+      ===================== */
+
+      if (
+        role !==
+        bs.currentRole
+      ) {
+
+        return res.status(403).json({
+          error: "Not your turn",
+          reason: "not_your_turn"
+        });
+
+      }
+
+      /* ===== step1 ===== */
+
+      if (
+        bs.step === 1
+      ) {
+
+        if (
+          role !== "attack"
+        ) {
+          throw new Error(
+            "Not your turn"
+          );
+        }
+
+        if (
+          position !== 0
+        ) {
+          throw new Error(
+            "Must left"
+          );
+        }
+
+        const card =
+          bs.attackHand[
+            cardIndex
+          ];
+
+        if (!card) {
+          throw new Error(
+            "Invalid card"
+          );
+        }
+
+        place(
+          card.value,
+          "attack",
+          face,
+          0
+        );
+
+        bs.attackHand.splice(
+          cardIndex,
+          1
+        );
+
+        bs.forcedFace =
+          reverseFace(
+            face
+          );
+
+        bs.currentRole =
+          "defense";
+
+        bs.step =
+          2;
+
+        return res.json({
+          success: true,
+          phase:
+            room.phase,
+          battleState:
+            bs
+        });
+
+      }
+
+      /* ===== step2 ===== */
+
+      if (
+        bs.step === 2
+      ) {
+
+        if (
+          role !== "defense"
+        ) {
+          throw new Error(
+            "Not your turn"
+          );
+        }
+
+        if (
+          face !==
+          bs.forcedFace
+        ) {
+          throw new Error(
+            "Forced"
+          );
+        }
+
+        const card =
+          bs.attackHand[
+            cardIndex
+          ];
+
+        if (!card) {
+          throw new Error(
+            "Invalid card"
+          );
+        }
+
+        place(
+          card.value,
+          "attack",
+          face,
+          position
+        );
+
+        bs.attackHand.splice(
+          cardIndex,
+          1
+        );
+
+        bs.forcedFace =
+          null;
+
+        bs.currentRole =
+          "defense";
+
+        bs.step =
+          3;
+
+        return res.json({
+          success: true,
+          phase:
+            room.phase,
+          battleState:
+            bs
+        });
+
+      }
+
+      /* ===== step3 ===== */
+
+      if (
+        bs.step === 3
+      ) {
+
+        if (
+          role !== "defense"
+        ) {
+          throw new Error(
+            "Not your turn"
+          );
+        }
+
+        const card =
+          bs.defenseHand[
+            cardIndex
+          ];
+
+        if (!card) {
+          throw new Error(
+            "Invalid card"
+          );
+        }
+
+        place(
+          card.value,
+          "defense",
+          face,
+          position
+        );
+
+        bs.defenseHand.splice(
+          cardIndex,
+          1
+        );
+
+        bs.forcedFace =
+          reverseFace(
+            face
+          );
+
+        bs.currentRole =
+          "attack";
+
+        bs.step =
+          4;
+
+        return res.json({
+          success: true,
+          phase:
+            room.phase,
+          battleState:
+            bs
+        });
+
+      }
+
+      /* ===== step4 ===== */
+
+      if (
+        bs.step === 4
+      ) {
+
+        if (
+          role !== "attack"
+        ) {
+          throw new Error(
+            "Not your turn"
+          );
+        }
+
+        if (
+          face !==
+          bs.forcedFace
+        ) {
+          throw new Error(
+            "Forced"
+          );
+        }
+
+        const card =
+          bs.defenseHand[
+            cardIndex
+          ];
+
+        if (!card) {
+          throw new Error(
+            "Invalid card"
+          );
+        }
+
+        place(
+          card.value,
+          "defense",
+          face,
+          position
+        );
+
+        bs.defenseHand.splice(
+          cardIndex,
+          1
+        );
+
+        bs.forcedFace =
+          null;
+
+        bs.currentRole =
+          "attack";
+
+        bs.step =
+          5;
+
+        return res.json({
+          success: true,
+          phase:
+            room.phase,
+          battleState:
+            bs
+        });
+
+      }
+
+      /* ===== step5＋自動step6 ===== */
+
+      if (
+        bs.step === 5
+      ) {
+
+        if (
+          role !== "attack"
+        ) {
+          throw new Error(
+            "Not your turn"
+          );
+        }
+
+        const combined = [
+          ...bs.attackHand,
+          ...bs.defenseHand
+        ];
+
+        const card =
+          combined[
+            cardIndex
+          ];
+
+        if (!card) {
+          throw new Error(
+            "Invalid card"
+          );
+        }
+
+        place(
+          card.value,
+          card.owner,
+          face,
+          position
+        );
+
+        if (
+          card.owner ===
+          "attack"
+        ) {
+
+          bs.attackHand =
+            bs.attackHand.filter(
+              item =>
+                item !== card
+            );
+
+        } else {
+
+          bs.defenseHand =
+            bs.defenseHand.filter(
+              item =>
+                item !== card
+            );
+
+        }
+
+        const lastCard =
+          bs.attackHand[0] ||
+          bs.defenseHand[0];
+
+        if (!lastCard) {
+          throw new Error(
+            "No card"
+          );
+        }
+
+        const lastPosition =
+          bs.pointArea.findIndex(
+            point =>
+              !point
+          );
+
+        if (
+          lastPosition === -1
+        ) {
+          throw new Error(
+            "No empty position"
+          );
+        }
+
+        place(
+          lastCard.value,
+          lastCard.owner,
+          "表",
+          lastPosition,
+          "defense"
+        );
+
+        bs.attackHand = [];
+        bs.defenseHand = [];
+
+        room.phase =
+          "replace_attack";
+
+        bs.currentRole =
+          "attack";
+
+        bs.forcedFace =
+          null;
+
+        return res.json({
+          success: true,
+
+          phase:
+            room.phase,
+
+          battleState:
+            bs
+        });
+
+      }
+
+      return res.status(400).json({
+        error: "Invalid battle step",
+        reason: "invalid_battle_step"
       });
+
+    } catch (error) {
+
+      let reason =
+        "battle_operation_failed";
+
+      if (
+        error.message ===
+        "Not your turn"
+      ) {
+        reason =
+          "not_your_turn";
+      }
+
+      if (
+        error.message ===
+        "Invalid card"
+      ) {
+        reason =
+          "invalid_card";
+      }
+
+      if (
+        error.message ===
+        "Position filled"
+      ) {
+        reason =
+          "position_filled";
+      }
+
+      if (
+        error.message ===
+        "Invalid position"
+      ) {
+        reason =
+          "invalid_position";
+      }
+
+      if (
+        error.message ===
+        "Forced"
+      ) {
+        reason =
+          "invalid_forced_face";
+      }
+
+      if (
+        error.message ===
+        "Must left"
+      ) {
+        reason =
+          "step1_left_only";
+      }
+
+      return res.status(400).json({
+        error:
+          error.message,
+        reason
+      });
+
     }
 
-  } catch (e) {
-    return res.status(400).json({ error: e.message });
   }
-});
+);
 
 /* =====================
    読み替え
