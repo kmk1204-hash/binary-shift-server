@@ -1699,6 +1699,168 @@ function getParticipantByPlayerId(
 }
 
 /* =====================
+   playerId整形
+===================== */
+
+function normalizePlayerId(
+  body = {}
+) {
+
+  if (
+    typeof body.playerId !==
+    "string"
+  ) {
+    return null;
+  }
+
+  const playerId =
+    body.playerId.trim();
+
+  if (
+    !playerId ||
+    playerId.length > 128
+  ) {
+    return null;
+  }
+
+  return playerId;
+
+}
+
+/* =====================
+   playerIdから現在のRoleを取得
+===================== */
+
+function getPlayerAccess(
+  room,
+  playerId
+) {
+
+  if (!room || !playerId) {
+    return null;
+  }
+
+  const participantInfo =
+    getParticipantByPlayerId(
+      room,
+      playerId
+    );
+
+  if (!participantInfo) {
+    return null;
+  }
+
+  const participant =
+    participantInfo.participant;
+
+  let role =
+    null;
+
+  if (
+    room.roles.attack ===
+    participant
+  ) {
+
+    role = "attack";
+
+  } else if (
+    room.roles.defense ===
+    participant
+  ) {
+
+    role = "defense";
+
+  }
+
+  if (!role) {
+    return null;
+  }
+
+  return {
+    playerId,
+
+    /*
+      試合開始時から固定
+      attack / defense
+    */
+    participant,
+
+    /*
+      現在のラウンドでの役割
+      attack / defense
+    */
+    role,
+
+    participantData:
+      participantInfo.data
+  };
+
+}
+
+/* =====================
+   API操作プレイヤー認証
+===================== */
+
+function requireRoomPlayer(
+  room,
+  body
+) {
+
+  const playerId =
+    normalizePlayerId(
+      body
+    );
+
+  if (!playerId) {
+
+    return {
+      ok: false,
+
+      status: 400,
+
+      response: {
+        error:
+          "playerId is required",
+
+        reason:
+          "missing_player_id"
+      }
+    };
+
+  }
+
+  const access =
+    getPlayerAccess(
+      room,
+      playerId
+    );
+
+  if (!access) {
+
+    return {
+      ok: false,
+
+      status: 403,
+
+      response: {
+        error:
+          "Player is not in this room",
+
+        reason:
+          "player_not_in_room"
+      }
+    };
+
+  }
+
+  return {
+    ok: true,
+    access
+  };
+
+}
+
+/* =====================
    Participant別報酬生成
 ===================== */
 
