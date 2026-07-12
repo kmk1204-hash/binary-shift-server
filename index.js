@@ -186,8 +186,6 @@ function cleanupRandomTickets() {
   }
 }
 
-import { fetch } from "wix-fetch";
-import { session } from "wix-storage";
 
 /* =====================
    Server
