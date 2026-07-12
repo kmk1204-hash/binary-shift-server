@@ -10,6 +10,42 @@ const rooms = {};
 let waitingRandomTicketId = null;
 const randomTickets = {};
 
+/* =====================
+   Roomライフサイクル設定
+===================== */
+
+/*
+  最後の通信からこの時間を超えると、
+  一時切断状態として扱う
+*/
+const PLAYER_DISCONNECT_AFTER_MS =
+  15 * 1000;
+
+/*
+  誰も接続しておらず、
+  操作も行われていないRoomの保持時間
+*/
+const ROOM_IDLE_TTL_MS =
+  30 * 60 * 1000;
+
+/*
+  接続状態にかかわらずRoomを保持する絶対上限
+*/
+const ROOM_ABSOLUTE_TTL_MS =
+  6 * 60 * 60 * 1000;
+
+/*
+  最終結果後に報酬取得を許可する時間
+*/
+const FINAL_RESULT_GRACE_MS =
+  24 * 60 * 60 * 1000;
+
+/*
+  不要Roomを確認する間隔
+*/
+const ROOM_CLEANUP_INTERVAL_MS =
+  60 * 1000;
+
 const RANDOM_TICKET_TTL_MS =
   1000 * 60 * 3; // 3分
 
@@ -343,17 +379,65 @@ function isRandomTicketOwner(
 
 }
 
-function createInitialRoom(type = "manual") {
+function createInitialRoom(
+  type = "manual"
+) {
 
-  return {
+  const now =
+    Date.now();
+
+  const room = {
 
     type,
 
-    phase: "placement",
+    phase:
+      "placement",
 
-    round: 1,
+    round:
+      1,
 
-    lastAccess: Date.now(),
+    /*
+      旧cleanupRoomsとの一時的な互換用。
+      第23回のTTL処理を完全移行したあとで
+      削除できます。
+    */
+    lastAccess:
+      now,
+
+    /*
+      Roomライフサイクル情報
+    */
+    createdAt:
+      now,
+
+    lastActivityAt:
+      now,
+
+    finalResultAt:
+      null,
+
+    closedAt:
+      null,
+
+    connectionState: {
+
+      /*
+        participant固定のattack側
+      */
+      attack: {
+        lastSeenAt:
+          null
+      },
+
+      /*
+        participant固定のdefense側
+      */
+      defense: {
+        lastSeenAt:
+          null
+      }
+
+    },
 
     leaveState: {
       attack: false,
@@ -374,22 +458,31 @@ function createInitialRoom(type = "manual") {
 
     },
 
-    // ゲーム進行用
+    /*
+      現在のラウンドにおける
+      RoleとParticipantの対応
+    */
     roles: {
       attack: "attack",
       defense: "defense"
     },
 
-    // プレイヤー情報
+    /*
+      試合開始時から固定の
+      Participant情報
+    */
     participants: {
+
       attack: {
         playerId: null,
         memberId: null
       },
+
       defense: {
         playerId: null,
         memberId: null
       }
+
     },
 
     totalScore: {
@@ -402,20 +495,32 @@ function createInitialRoom(type = "manual") {
       defense: null
     },
 
-    rewardMatchCount: 0,
-    rewardAppliedThisMatch: false,
-    rewardResult: null,
+    rewardMatchCount:
+      0,
 
-    matchNumber: 1,
+    rewardAppliedThisMatch:
+      false,
 
-    battleState: null,
+    rewardResult:
+      null,
 
-    openInfo: null,
-    openReady: null,
+    matchNumber:
+      1,
 
-    lastReplaceIndex: null,
+    battleState:
+      null,
 
-    nextRoundReady: null,
+    openInfo:
+      null,
+
+    openReady:
+      null,
+
+    lastReplaceIndex:
+      null,
+
+    nextRoundReady:
+      null,
 
     rematchState: {
       attack: null,
@@ -423,6 +528,18 @@ function createInitialRoom(type = "manual") {
     }
 
   };
+
+  /*
+    将来フィールドが増えた場合や、
+    古いRoomデータが混在した場合にも
+    必要項目を補完する
+  */
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  return room;
 
 }
 
@@ -1944,6 +2061,319 @@ function requireRoomPlayer(
     ok: true,
     access
   };
+
+}
+
+/* =====================
+   Roomライフサイクル初期化
+===================== */
+
+function ensureRoomLifecycle(
+  room
+) {
+
+  if (!room) {
+    return;
+  }
+
+  const now =
+    Date.now();
+
+  if (
+    !Number.isFinite(
+      room.createdAt
+    )
+  ) {
+
+    room.createdAt =
+      now;
+
+  }
+
+  if (
+    !Number.isFinite(
+      room.lastActivityAt
+    )
+  ) {
+
+    room.lastActivityAt =
+      room.createdAt;
+
+  }
+
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      room,
+      "finalResultAt"
+    )
+  ) {
+
+    room.finalResultAt =
+      null;
+
+  }
+
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      room,
+      "closedAt"
+    )
+  ) {
+
+    room.closedAt =
+      null;
+
+  }
+
+  if (
+    !room.connectionState ||
+    typeof room.connectionState !==
+      "object"
+  ) {
+
+    room.connectionState = {
+      attack: {
+        lastSeenAt: null
+      },
+
+      defense: {
+        lastSeenAt: null
+      }
+    };
+
+  }
+
+  if (
+    !room.connectionState.attack ||
+    typeof room.connectionState.attack !==
+      "object"
+  ) {
+
+    room.connectionState.attack = {
+      lastSeenAt: null
+    };
+
+  }
+
+  if (
+    !room.connectionState.defense ||
+    typeof room.connectionState.defense !==
+      "object"
+  ) {
+
+    room.connectionState.defense = {
+      lastSeenAt: null
+    };
+
+  }
+
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      room.connectionState.attack,
+      "lastSeenAt"
+    )
+  ) {
+
+    room.connectionState.attack.lastSeenAt =
+      null;
+
+  }
+
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      room.connectionState.defense,
+      "lastSeenAt"
+    )
+  ) {
+
+    room.connectionState.defense.lastSeenAt =
+      null;
+
+  }
+
+}
+
+/* =====================
+   Room操作時刻更新
+===================== */
+
+function touchRoomActivity(
+  room
+) {
+
+  if (!room) {
+    return;
+  }
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  room.lastActivityAt =
+    Date.now();
+
+}
+
+/* =====================
+   プレイヤー接続時刻更新
+===================== */
+
+function touchParticipantPresence(
+  room,
+  participant
+) {
+
+  if (!room) {
+    return;
+  }
+
+  if (
+    participant !== "attack" &&
+    participant !== "defense"
+  ) {
+    return;
+  }
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  room.connectionState[
+    participant
+  ].lastSeenAt =
+    Date.now();
+
+}
+
+/* =====================
+   プレイヤー接続判定
+===================== */
+
+function isParticipantConnected(
+  room,
+  participant,
+  now = Date.now()
+) {
+
+  if (!room) {
+    return false;
+  }
+
+  if (
+    participant !== "attack" &&
+    participant !== "defense"
+  ) {
+    return false;
+  }
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  const lastSeenAt =
+    room.connectionState[
+      participant
+    ].lastSeenAt;
+
+  if (
+    !Number.isFinite(
+      lastSeenAt
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    now - lastSeenAt <=
+    PLAYER_DISCONNECT_AFTER_MS
+  );
+
+}
+
+/* =====================
+   Room接続状態取得
+===================== */
+
+function getRoomConnectionState(
+  room
+) {
+
+  const now =
+    Date.now();
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  return {
+    attack: {
+      connected:
+        isParticipantConnected(
+          room,
+          "attack",
+          now
+        ),
+
+      lastSeenAt:
+        room.connectionState
+          .attack
+          .lastSeenAt
+    },
+
+    defense: {
+      connected:
+        isParticipantConnected(
+          room,
+          "defense",
+          now
+        ),
+
+      lastSeenAt:
+        room.connectionState
+          .defense
+          .lastSeenAt
+    }
+  };
+
+}
+
+/* =====================
+   最後に確認された時刻
+===================== */
+
+function getLatestRoomTimestamp(
+  room
+) {
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  const timestamps = [
+    room.createdAt,
+    room.lastActivityAt,
+    room.connectionState
+      .attack
+      .lastSeenAt,
+    room.connectionState
+      .defense
+      .lastSeenAt
+  ].filter(
+    value =>
+      Number.isFinite(value)
+  );
+
+  if (
+    timestamps.length === 0
+  ) {
+
+    return Date.now();
+
+  }
+
+  return Math.max(
+    ...timestamps
+  );
 
 }
 
