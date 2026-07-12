@@ -49,8 +49,6 @@ const ROOM_CLEANUP_INTERVAL_MS =
 const RANDOM_TICKET_TTL_MS =
   1000 * 60 * 3; // 3分
 
-const ROOM_TTL_MS =
-  5 * 60 * 1000;
 
 const RANDOM_REWARD_LIMIT_PER_ROOM =
   3;
@@ -188,45 +186,684 @@ function cleanupRandomTickets() {
   }
 }
 
+import { fetch } from "wix-fetch";
+import { session } from "wix-storage";
+
+/* =====================
+   Server
+===================== */
+
+const SERVER_URL =
+  "https://binary-shift-server.onrender.com";
+
+/* =====================
+   Game Context
+===================== */
+
+export async function createGameContext() {
+
+  const game = {
+
+    /* ===== 固定情報 ===== */
+
+    roomId: null,
+    playerId: null,
+
+    /*
+      プレイヤー本人
+      試合開始時から固定
+    */
+    myParticipant: null,
+
+    /* ===== 現在情報 ===== */
+
+    /*
+      現在の攻守
+      ラウンドごとに変化
+    */
+    myRole: null,
+
+    /*
+      現在のRoleと
+      Participantの対応
+    */
+    roles: null,
+
+    participants: null,
+
+    /*
+      Participant単位の
+      接続状態
+    */
+    connectionState: null,
+
+    /* ===== room-state ===== */
+
+    room: null,
+
+    type: null,
+
+    phase: null,
+    round: null,
+
+    placementInfo: null,
+
+    openInfo: null,
+    openReady: null,
+
+    battleState: null,
+
+    lastReplaceIndex: null,
+
+    totalScore: null,
+    finalBinary: null,
+
+    nextRoundReady: null,
+
+    rematchState: null,
+    matchEnd: null,
+
+    result: null,
+
+    rewardMatchCount: 0,
+    rewardRemainingCount: 0,
+    rewardResult: null,
+
+    /* =====================
+       最新状態取得
+    ===================== */
+
+    async refresh() {
+
+      if (!this.roomId) {
+
+        throw new Error(
+          "roomIdがありません"
+        );
+
+      }
+
+      if (!this.playerId) {
+
+        throw new Error(
+          "playerIdがありません"
+        );
+
+      }
+
+      const roomId =
+        encodeURIComponent(
+          this.roomId
+        );
+
+      const playerId =
+        encodeURIComponent(
+          this.playerId
+        );
+
+      const url =
+        `${SERVER_URL}/api/room-state/${roomId}` +
+        `?playerId=${playerId}`;
+
+      const res =
+        await fetch(
+          url,
+          {
+            method: "GET"
+          }
+        );
+
+      const room =
+        await safeJson(
+          res
+        );
+
+      if (!res.ok) {
+
+        throw new Error(
+          getRoomStateErrorMessage(
+            room,
+            res.status
+          )
+        );
+
+      }
+
+      if (!room) {
+
+        throw new Error(
+          "RoomStateの内容を取得できません"
+        );
+
+      }
+
+      if (!room.roles) {
+
+        throw new Error(
+          "rolesが存在しません"
+        );
+
+      }
+
+      if (!room.participants) {
+
+        throw new Error(
+          "participantsが存在しません"
+        );
+
+      }
+
+      this.room =
+        room;
+
+      this.roles =
+        room.roles;
+
+      this.participants =
+        room.participants;
+
+      this.connectionState =
+        room.connectionState ??
+        null;
+
+      /* =====================
+         プレイヤー本人
+      ===================== */
+
+      /*
+        新しいroom-stateでは、
+        Expressが認証済みの
+        viewerParticipantを返す
+      */
+
+      if (
+        room.viewerParticipant ===
+          "attack" ||
+        room.viewerParticipant ===
+          "defense"
+      ) {
+
+        this.myParticipant =
+          room.viewerParticipant;
+
+      } else if (
+        room.participants
+          ?.attack
+          ?.isYou === true
+      ) {
+
+        /*
+          旧room-stateとの互換用
+        */
+
+        this.myParticipant =
+          "attack";
+
+      } else if (
+        room.participants
+          ?.defense
+          ?.isYou === true
+      ) {
+
+        /*
+          旧room-stateとの互換用
+        */
+
+        this.myParticipant =
+          "defense";
+
+      } else {
+
+        throw new Error(
+          "playerIdがRoomに存在しません"
+        );
+
+      }
+
+      /* =====================
+         現在の役割
+      ===================== */
+
+      if (
+        room.roles.attack ===
+        this.myParticipant
+      ) {
+
+        this.myRole =
+          "attack";
+
+      } else if (
+        room.roles.defense ===
+        this.myParticipant
+      ) {
+
+        this.myRole =
+          "defense";
+
+      } else {
+
+        throw new Error(
+          "現在の役割を判定できません"
+        );
+
+      }
+
+      /* =====================
+         よく使う値を展開
+      ===================== */
+
+      this.type =
+        room.type ??
+        null;
+
+      this.phase =
+        room.phase ??
+        null;
+
+      this.round =
+        room.round ??
+        null;
+
+      this.placementInfo =
+        room.placementInfo ??
+        null;
+
+      this.openInfo =
+        room.openInfo ??
+        null;
+
+      this.openReady =
+        room.openReady ??
+        null;
+
+      this.battleState =
+        room.battleState ??
+        null;
+
+      this.lastReplaceIndex =
+        room.lastReplaceIndex ??
+        null;
+
+      this.totalScore =
+        room.totalScore ??
+        null;
+
+      this.finalBinary =
+        room.finalBinary ??
+        null;
+
+      this.nextRoundReady =
+        room.nextRoundReady ??
+        null;
+
+      this.rematchState =
+        room.rematchState ??
+        null;
+
+      this.matchEnd =
+        room.matchEnd ??
+        null;
+
+      this.result =
+        room.result ??
+        null;
+
+      this.rewardMatchCount =
+        room.rewardMatchCount ??
+        0;
+
+      this.rewardRemainingCount =
+        room.rewardRemainingCount ??
+        0;
+
+      this.rewardResult =
+        room.rewardResult ??
+        null;
+
+      return room;
+
+    }
+
+  };
+
+  /* =====================
+     Session取得
+  ===================== */
+
+  game.roomId =
+    session.getItem(
+      "roomId"
+    );
+
+  game.playerId =
+    session.getItem(
+      "playerId"
+    );
+
+  if (!game.roomId) {
+
+    throw new Error(
+      "roomIdがありません"
+    );
+
+  }
+
+  if (!game.playerId) {
+
+    throw new Error(
+      "playerIdがありません"
+    );
+
+  }
+
+  /* =====================
+     初回同期
+  ===================== */
+
+  await game.refresh();
+
+  return game;
+
+}
+
+/* =====================
+   RoomStateエラー表示
+===================== */
+
+function getRoomStateErrorMessage(
+  data,
+  status
+) {
+
+  const reason =
+    data?.reason;
+
+  if (
+    reason ===
+    "missing_player_id"
+  ) {
+
+    return (
+      "プレイヤー情報を" +
+      "確認できません"
+    );
+
+  }
+
+  if (
+    reason ===
+    "player_not_in_room"
+  ) {
+
+    return (
+      "このルームの参加者として" +
+      "確認できません"
+    );
+
+  }
+
+  if (
+    reason ===
+    "room_not_found"
+  ) {
+
+    return (
+      "ルームが存在しないか、" +
+      "有効期限が切れています"
+    );
+
+  }
+
+  if (
+    data?.error
+  ) {
+
+    return data.error;
+
+  }
+
+  return (
+    `RoomState取得失敗` +
+    `（${status}）`
+  );
+
+}
+
+/* =====================
+   安全なJSON取得
+===================== */
+
+async function safeJson(
+  response
+) {
+
+  try {
+
+    return await response.json();
+
+  } catch (e) {
+
+    return null;
+
+  }
+
+}
+
 /* =====================
    Room掃除
 ===================== */
 
 function cleanupRooms() {
 
-  const now = Date.now();
+  const now =
+    Date.now();
 
-  for (const roomId in rooms) {
+  for (
+    const roomId of
+    Object.keys(rooms)
+  ) {
 
-    const room = rooms[roomId];
+    const room =
+      rooms[roomId];
+
+    /*
+      壊れたRoomデータを削除
+    */
 
     if (!room) {
-      continue;
-    }
 
-    // 両者離脱済みならTTLを待たず削除
-    if (
-      room.leaveState &&
-      room.leaveState.attack &&
-      room.leaveState.defense
-    ) {
+      delete rooms[
+        roomId
+      ];
 
-      delete rooms[roomId];
       continue;
 
     }
 
-    // 一定時間アクセスがないRoomを削除
+    /*
+      古いRoomにも
+      ライフサイクル情報を補完
+    */
+
+    ensureRoomLifecycle(
+      room
+    );
+
+    /* =====================
+       最終結果後
+    ===================== */
+
+    /*
+      final_resultのRoomは、
+      通常のアイドルTTLや絶対TTLでは
+      削除しない。
+
+      報酬請求のため、
+      finalResultAtから24時間保持する。
+    */
+
     if (
-      now - room.lastAccess >
-      ROOM_TTL_MS
+      room.phase ===
+      "final_result"
     ) {
 
-      console.log(
-        `Room expired: ${roomId}`
+      /*
+        第23回④の反映前に作られたRoomや、
+        古いRoomへの互換処理
+      */
+
+      if (
+        !Number.isFinite(
+          room.finalResultAt
+        )
+      ) {
+
+        room.finalResultAt =
+          now;
+
+      }
+
+      const finalResultExpired =
+        now -
+          room.finalResultAt >
+        FINAL_RESULT_GRACE_MS;
+
+      if (
+        finalResultExpired
+      ) {
+
+        removeRoomAndRelatedTickets(
+          roomId,
+          "final_result_grace_expired"
+        );
+
+      }
+
+      /*
+        final_result中は、
+        以下の通常TTL判定へ進まない
+      */
+
+      continue;
+
+    }
+
+    /* =====================
+       両者が明示的に離脱
+    ===================== */
+
+    const bothPlayersLeft =
+      room.leaveState
+        ?.attack === true &&
+      room.leaveState
+        ?.defense === true;
+
+    if (
+      bothPlayersLeft
+    ) {
+
+      if (
+        !Number.isFinite(
+          room.closedAt
+        )
+      ) {
+
+        room.closedAt =
+          now;
+
+      }
+
+      removeRoomAndRelatedTickets(
+        roomId,
+        "both_players_left"
       );
 
-      delete rooms[roomId];
+      continue;
+
+    }
+
+    /* =====================
+       Room絶対上限
+    ===================== */
+
+    const absoluteExpired =
+      Number.isFinite(
+        room.createdAt
+      ) &&
+      now -
+        room.createdAt >
+        ROOM_ABSOLUTE_TTL_MS;
+
+    if (
+      absoluteExpired
+    ) {
+
+      removeRoomAndRelatedTickets(
+        roomId,
+        "absolute_ttl_expired"
+      );
+
+      continue;
+
+    }
+
+    /* =====================
+       接続状態
+    ===================== */
+
+    const attackConnected =
+      isParticipantConnected(
+        room,
+        "attack",
+        now
+      );
+
+    const defenseConnected =
+      isParticipantConnected(
+        room,
+        "defense",
+        now
+      );
+
+    /*
+      どちらかが接続中なら、
+      アイドルTTLでは削除しない
+    */
+
+    if (
+      attackConnected ||
+      defenseConnected
+    ) {
+
+      continue;
+
+    }
+
+    /* =====================
+       アイドルTTL
+    ===================== */
+
+    const latestTimestamp =
+      getLatestRoomTimestamp(
+        room
+      );
+
+    const idleExpired =
+      Number.isFinite(
+        latestTimestamp
+      ) &&
+      now -
+        latestTimestamp >
+        ROOM_IDLE_TTL_MS;
+
+    if (
+      idleExpired
+    ) {
+
+      removeRoomAndRelatedTickets(
+        roomId,
+        "idle_ttl_expired"
+      );
 
     }
 
@@ -395,14 +1032,6 @@ function createInitialRoom(
 
     round:
       1,
-
-    /*
-      旧cleanupRoomsとの一時的な互換用。
-      第23回のTTL処理を完全移行したあとで
-      削除できます。
-    */
-    lastAccess:
-      now,
 
     /*
       Roomライフサイクル情報
@@ -1765,16 +2394,6 @@ app.get(
       room,
       viewerParticipant
     );
-
-    /*
-      旧cleanupRoomsとの一時的な互換用。
-
-      第23回③でcleanupRoomsを
-      新TTL方式へ置き換えたあと削除する。
-    */
-
-    room.lastAccess =
-      Date.now();
 
     const publicParticipants =
       createPublicParticipants(
@@ -4828,6 +5447,48 @@ app.post(
 
   }
 );
+
+/* =====================
+   定期クリーンアップ
+===================== */
+
+const cleanupTimer =
+  setInterval(
+    () => {
+
+      try {
+
+        cleanupRandomTickets();
+
+        cleanupRooms();
+
+      } catch (error) {
+
+        console.error(
+          "Cleanup failed:",
+          error
+        );
+
+      }
+
+    },
+    ROOM_CLEANUP_INTERVAL_MS
+  );
+
+/*
+  Node.js終了時に、
+  このTimerだけがプロセスを
+  生存させ続けないようにする
+*/
+
+if (
+  typeof cleanupTimer.unref ===
+  "function"
+) {
+
+  cleanupTimer.unref();
+
+}
 
 /* =====================
    起動
