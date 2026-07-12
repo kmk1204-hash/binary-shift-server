@@ -316,6 +316,33 @@ function findWaitingTicketByMemberId(memberId) {
 
 }
 
+/* =====================
+   ランダムチケット所有者確認
+===================== */
+
+function isRandomTicketOwner(
+  ticket,
+  clientId
+) {
+
+  if (!ticket) {
+    return false;
+  }
+
+  if (
+    typeof clientId !== "string" ||
+    !clientId.trim()
+  ) {
+    return false;
+  }
+
+  return (
+    ticket.clientId ===
+    clientId.trim()
+  );
+
+}
+
 function createInitialRoom(type = "manual") {
 
   return {
@@ -1279,69 +1306,184 @@ app.post(
 /* =====================
    ランダムマッチ状態確認
 ===================== */
-app.get("/api/random-match/:ticketId", (req, res) => {
 
-  cleanupRandomTickets();
-  cleanupRooms();
+app.get(
+  "/api/random-match/:ticketId",
+  (req, res) => {
 
-  const ticket = randomTickets[req.params.ticketId];
+    cleanupRandomTickets();
+    cleanupRooms();
 
-  if (!ticket) {
-    return res.status(404).json({
-      error: "Ticket not found"
-    });
-  }
+    const ticketId =
+      req.params.ticketId;
 
-  if (!ticket.matched) {
+    const ticket =
+      randomTickets[ticketId];
+
+    if (!ticket) {
+
+      return res.status(404).json({
+        error: "Ticket not found",
+        reason: "ticket_not_found"
+      });
+
+    }
+
+    const clientId =
+      typeof req.query?.clientId === "string"
+        ? req.query.clientId.trim()
+        : "";
+
+    if (!clientId) {
+
+      return res.status(400).json({
+        error: "clientId is required",
+        reason: "missing_client_id"
+      });
+
+    }
+
+    if (
+      !isRandomTicketOwner(
+        ticket,
+        clientId
+      )
+    ) {
+
+      return res.status(403).json({
+        error: "Ticket owner mismatch",
+        reason: "ticket_owner_mismatch"
+      });
+
+    }
+
+    if (!ticket.matched) {
+
+      return res.json({
+        matched: false,
+        ticketId
+      });
+
+    }
 
     return res.json({
-
-      matched: false,
-
-      ticketId: req.params.ticketId
-
+      matched: true,
+      ticketId,
+      roomId:
+        ticket.roomId,
+      role:
+        ticket.role,
+      playerId:
+        ticket.playerId
     });
 
   }
-
-  return res.json({
-
-    matched: true,
-
-    ticketId: req.params.ticketId,
-
-    roomId: ticket.roomId,
-
-    role: ticket.role,
-
-    playerId: ticket.playerId
-
-  });
-
-});
+);
 
 /* =====================
    ランダムマッチキャンセル
 ===================== */
-app.post("/api/random-match-cancel", (req, res) => {
-  cleanupRandomTickets();
-  cleanupRooms();
 
-  const { ticketId } = req.body;
+app.post(
+  "/api/random-match-cancel",
+  (req, res) => {
 
-  if (!ticketId || !randomTickets[ticketId]) {
-    return res.json({ success: true });
+    cleanupRandomTickets();
+    cleanupRooms();
+
+    const ticketId =
+      typeof req.body?.ticketId === "string"
+        ? req.body.ticketId.trim()
+        : "";
+
+    const clientId =
+      typeof req.body?.clientId === "string"
+        ? req.body.clientId.trim()
+        : "";
+
+    if (!ticketId) {
+
+      return res.status(400).json({
+        error: "ticketId is required",
+        reason: "missing_ticket_id"
+      });
+
+    }
+
+    if (!clientId) {
+
+      return res.status(400).json({
+        error: "clientId is required",
+        reason: "missing_client_id"
+      });
+
+    }
+
+    const ticket =
+      randomTickets[ticketId];
+
+    /*
+      すでにTTLなどで削除済みなら、
+      キャンセル完了として扱う
+    */
+
+    if (!ticket) {
+
+      return res.json({
+        success: true,
+        alreadyRemoved: true
+      });
+
+    }
+
+    if (
+      !isRandomTicketOwner(
+        ticket,
+        clientId
+      )
+    ) {
+
+      return res.status(403).json({
+        error: "Ticket owner mismatch",
+        reason: "ticket_owner_mismatch"
+      });
+
+    }
+
+    /*
+      マッチ成立後はキャンセル不可
+    */
+
+    if (ticket.matched) {
+
+      return res.status(409).json({
+        error: "Ticket already matched",
+        reason: "ticket_already_matched"
+      });
+
+    }
+
+    if (
+      waitingRandomTicketId ===
+      ticketId
+    ) {
+
+      waitingRandomTicketId =
+        null;
+
+    }
+
+    delete randomTickets[
+      ticketId
+    ];
+
+    return res.json({
+      success: true,
+      alreadyRemoved: false
+    });
+
   }
-
-  if (waitingRandomTicketId === ticketId) {
-    waitingRandomTicketId = null;
-  }
-
-  delete randomTickets[ticketId];
-
-  return res.json({ success: true });
-});
-
+);
 /* =====================
    状態取得
 ===================== */
