@@ -910,53 +910,140 @@ app.post(
 /* =====================
    Room離脱
 ===================== */
-app.post("/api/leave-room/:roomId", (req, res) => {
 
-  cleanupRooms();
+app.post(
+  "/api/leave-room/:roomId",
+  (req, res) => {
 
-  const room = rooms[req.params.roomId];
+    const roomId =
+      req.params.roomId;
 
-  if (!room) {
-    return res.json({ success: true });
-  }
+    const room =
+      rooms[roomId];
 
-  const { role } = req.body;
+    /*
+      すでにRoom削除済みなら
+      離脱完了として扱う
+    */
 
-  if (role !== "attack" && role !== "defense") {
-    return res.status(400).json({
-      error: "Invalid role"
-    });
-  }
+    if (!room) {
 
-  room.leaveState[role] = true;
+      return res.json({
+        success: true,
+        alreadyRemoved: true
+      });
 
-  /* =====================
-     両者離脱
-  ===================== */
+    }
 
-  if (
-    room.leaveState.attack &&
-    room.leaveState.defense
-  ) {
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
 
-    // 今後ここでポイント付与
-    // if (room.type === "random") { ... }
+    if (!auth.ok) {
 
-    delete rooms[req.params.roomId];
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    /*
+      leaveStateもParticipant固定スロットで管理する
+    */
+
+    const participant =
+      auth.access.participant;
+
+    if (!room.leaveState) {
+
+      room.leaveState = {
+        attack: false,
+        defense: false
+      };
+
+    }
+
+    room.leaveState[
+      participant
+    ] = true;
+
+    /*
+      両者離脱済みならRoomを即削除
+    */
+
+    if (
+      room.leaveState.attack &&
+      room.leaveState.defense
+    ) {
+
+      /*
+        このRoomに紐づく
+        Random Match ticketも削除
+      */
+
+      for (
+        const ticketId of
+        Object.keys(randomTickets)
+      ) {
+
+        if (
+          randomTickets[
+            ticketId
+          ]?.roomId ===
+          roomId
+        ) {
+
+          delete randomTickets[
+            ticketId
+          ];
+
+          if (
+            waitingRandomTicketId ===
+            ticketId
+          ) {
+
+            waitingRandomTicketId =
+              null;
+
+          }
+
+        }
+
+      }
+
+      delete rooms[
+        roomId
+      ];
+
+      return res.json({
+        success: true,
+
+        alreadyRemoved: false,
+
+        roomRemoved: true,
+
+        participant
+      });
+
+    }
 
     return res.json({
       success: true,
-      deleted: true
+
+      alreadyRemoved: false,
+
+      roomRemoved: false,
+
+      participant,
+
+      leaveState:
+        room.leaveState
     });
 
   }
-
-  return res.json({
-    success: true,
-    deleted: false
-  });
-
-});
+);
 
 /* =====================
    ランダムマッチ開始
@@ -3742,119 +3829,229 @@ app.post(
 );
 
 /* =====================
-   Match End Choice
+   最終結果後の選択
 ===================== */
 
-app.post("/api/match-end-choice/:roomId", (req, res) => {
+app.post(
+  "/api/match-end-choice/:roomId",
+  (req, res) => {
 
-  const room = rooms[req.params.roomId];
+    const room =
+      rooms[req.params.roomId];
 
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
-    });
-  }
+    if (!room) {
 
-  if (room.phase !== "final_result") {
-    return res.status(400).json({
-      error: "Not final_result"
-    });
-  }
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
 
-  const { role, action } = req.body;
+    }
 
-  if (
-    role !== "attack" &&
-    role !== "defense"
-  ) {
-    return res.status(400).json({
-      error: "Invalid role"
-    });
-  }
+    if (
+      room.phase !==
+      "final_result"
+    ) {
 
-  if (
-    action !== "rematch" &&
-    action !== "exit"
-  ) {
-    return res.status(400).json({
-      error: "Invalid action"
-    });
-  }
+      return res.status(400).json({
+        error: "Not final result phase",
+        reason: "invalid_phase"
+      });
 
-  if (!room.rematchState) {
-    room.rematchState = {
-      attack: null,
-      defense: null
-    };
-  }
+    }
 
-  // 二重送信防止
-  if (room.rematchState[role] !== null) {
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    /*
+      再戦・終了状態はParticipant固定スロットで管理する
+    */
+
+    const participant =
+      auth.access.participant;
+
+    const action =
+      req.body?.action;
+
+    if (
+      action !== "rematch" &&
+      action !== "exit"
+    ) {
+
+      return res.status(400).json({
+        error: "Invalid action",
+        reason: "invalid_action"
+      });
+
+    }
+
+    if (!room.rematchState) {
+
+      room.rematchState = {
+        attack: null,
+        defense: null
+      };
+
+    }
+
+    const existingAction =
+      room.rematchState[
+        participant
+      ];
+
+    /*
+      同じ選択の再送は成功扱い
+    */
+
+    if (
+      existingAction ===
+      action
+    ) {
+
+      return res.json({
+        success: true,
+
+        alreadySelected: true,
+
+        action,
+
+        participant,
+
+        phase:
+          room.phase,
+
+        rematchState:
+          room.rematchState,
+
+        matchEnd: {
+          attack:
+            room.rematchState.attack,
+
+          defense:
+            room.rematchState.defense
+        }
+      });
+
+    }
+
+    /*
+      一度選択した後の変更は拒否
+    */
+
+    if (
+      existingAction !== null &&
+      existingAction !== undefined
+    ) {
+
+      return res.status(409).json({
+        error:
+          "Match end choice already selected",
+
+        reason:
+          "choice_already_selected"
+      });
+
+    }
+
+    room.rematchState[
+      participant
+    ] = action;
+
+    const attackChoice =
+      room.rematchState.attack;
+
+    const defenseChoice =
+      room.rematchState.defense;
+
+    /*
+      両者が再戦を選択
+    */
+
+    if (
+      attackChoice === "rematch" &&
+      defenseChoice === "rematch"
+    ) {
+
+      resetRoomForRematch(
+        room
+      );
+
+      return res.json({
+        success: true,
+
+        alreadySelected: false,
+
+        rematchStarted: true,
+
+        action,
+
+        participant,
+
+        phase:
+          room.phase,
+
+        round:
+          room.round,
+
+        roles:
+          room.roles,
+
+        rematchState:
+          room.rematchState,
+
+        matchEnd: {
+          attack: null,
+          defense: null
+        }
+      });
+
+    }
+
+    /*
+      どちらかが終了を選択した場合、
+      相手側にも状態が見えるようにする。
+      Room削除はleave-roomで行う。
+    */
 
     return res.json({
       success: true,
-      phase: room.phase,
-      rematchState: room.rematchState
+
+      alreadySelected: false,
+
+      rematchStarted: false,
+
+      action,
+
+      participant,
+
+      phase:
+        room.phase,
+
+      rematchState:
+        room.rematchState,
+
+      matchEnd: {
+        attack:
+          room.rematchState.attack,
+
+        defense:
+          room.rematchState.defense
+      }
     });
 
   }
-
-  room.rematchState[role] = action;
-
-  const attackChoice = room.rematchState.attack;
-  const defenseChoice = room.rematchState.defense;
-
-  /* =====================
-     両者再戦
-  ===================== */
-
-  if (
-    attackChoice === "rematch" &&
-    defenseChoice === "rematch"
-  ) {
-
-
-    // 完全リセット
-    resetRoomForRematch(room);
-
-    return res.json({
-      success: true,
-      phase: room.phase,
-      rematchState: room.rematchState
-    });
-
-  }
-
-  /* =====================
-     誰かが終了
-  ===================== */
-
-  if (
-    attackChoice === "exit" ||
-    defenseChoice === "exit"
-  ) {
-
-
-    return res.json({
-      success: true,
-      phase: room.phase,
-      rematchState: room.rematchState
-    });
-
-  }
-
-  /* =====================
-     相手待ち
-  ===================== */
-
-  return res.json({
-    success: true,
-    phase: room.phase,
-    rematchState: room.rematchState
-  });
-
-});
-
+);
 /* =====================
    報酬確認API
    POST /api/reward-claim-info/:roomId
