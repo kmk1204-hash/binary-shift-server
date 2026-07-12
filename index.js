@@ -1957,125 +1957,175 @@ function createParticipantReward(
    配置フェーズ
    ※ 実質 build：3枚のカード選択
 ===================== */
-app.post("/api/placement/place/:roomId", (req, res) => {
 
-  const room = rooms[req.params.roomId];
+app.post(
+  "/api/placement/place/:roomId",
+  (req, res) => {
 
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
-    });
-  }
+    const room =
+      rooms[req.params.roomId];
 
-  const { role, card } = req.body;
+    if (!room) {
 
-  if (room.phase !== "placement") {
-    return res.status(400).json({
-      error: "Not placement phase"
-    });
-  }
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
 
-  if (
-    role !== "attack" &&
-    role !== "defense"
-  ) {
-    return res.status(400).json({
-      error: "Invalid role"
-    });
-  }
+    }
 
-  if (
-    card !== 0 &&
-    card !== 1
-  ) {
-    return res.status(400).json({
-      error: "Invalid card"
-    });
-  }
+    if (
+      room.phase !==
+      "placement"
+    ) {
 
-  /* =====================
-     現在の攻守プレイヤー取得
-  ===================== */
+      return res.status(400).json({
+        error: "Not placement phase",
+        reason: "invalid_phase"
+      });
 
-  const player = getRolePlayer(room, role);
+    }
 
-  if (!player) {
-    return res.status(400).json({
-      error: "Player not found"
-    });
-  }
+    /*
+      playerIdから本人と現在のRoleを判定
+    */
 
-  if (player.placedCards.length >= 3) {
-    return res.status(400).json({
-      error: "Already placed"
-    });
-  }
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
 
-  player.placedCards.push(card);
+    if (!auth.ok) {
 
-  const attackPlayer =
-    getRolePlayer(room, "attack");
+      return res
+        .status(auth.status)
+        .json(auth.response);
 
-  const defensePlayer =
-    getRolePlayer(room, "defense");
+    }
 
-  const attackCount =
-    attackPlayer.placedCards.length;
+    const role =
+      auth.access.role;
 
-  const defenseCount =
-    defensePlayer.placedCards.length;
+    const card =
+      req.body?.card;
 
-  /* =====================
-     Build完了
-  ===================== */
+    if (
+      card !== 0 &&
+      card !== 1
+    ) {
 
-  if (
-    attackCount === 3 &&
-    defenseCount === 3
-  ) {
+      return res.status(400).json({
+        error: "Invalid card",
+        reason: "invalid_card"
+      });
 
-    room.phase = "open";
+    }
 
-    room.openInfo =
-      createEmptyOpenInfo();
+    /*
+      現在のRoleに対応する手札を取得
+    */
 
-    room.battleState = null;
+    const player =
+      getRolePlayer(
+        room,
+        role
+      );
 
-  }
+    if (!player) {
 
-  return res.json({
+      return res.status(400).json({
+        error: "Player not found",
+        reason: "player_data_not_found"
+      });
 
-    success: true,
+    }
 
-    phase: room.phase,
+    if (
+      player.placedCards.length >= 3
+    ) {
 
-    attackCount,
+      return res.status(400).json({
+        error: "Already placed",
+        reason: "already_placed"
+      });
 
-    defenseCount,
+    }
 
-    placementInfo: {
+    player.placedCards.push(
+      card
+    );
+
+    const attackPlayer =
+      getRolePlayer(
+        room,
+        "attack"
+      );
+
+    const defensePlayer =
+      getRolePlayer(
+        room,
+        "defense"
+      );
+
+    const attackCount =
+      attackPlayer.placedCards.length;
+
+    const defenseCount =
+      defensePlayer.placedCards.length;
+
+    /*
+      Build完了
+    */
+
+    if (
+      attackCount === 3 &&
+      defenseCount === 3
+    ) {
+
+      room.phase =
+        "open";
+
+      room.openInfo =
+        createEmptyOpenInfo();
+
+      room.battleState =
+        null;
+
+    }
+
+    return res.json({
+      success: true,
+
+      phase:
+        room.phase,
+
+      role,
 
       attackCount,
 
       defenseCount,
 
-      attackCards:
-        attackPlayer.placedCards,
+      placementInfo: {
+        attackCount,
+        defenseCount,
 
-      defenseCards:
-        defensePlayer.placedCards
+        attackCards:
+          attackPlayer.placedCards,
 
-    },
+        defenseCards:
+          defensePlayer.placedCards
+      },
 
-    openInfo:
-      room.openInfo,
+      openInfo:
+        room.openInfo,
 
-    battleState:
-      room.battleState
+      battleState:
+        room.battleState
+    });
 
-  });
-
-});
+  }
+);
 
 /* =====================
    openフェーズ：defenseが公開情報を確定
