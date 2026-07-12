@@ -2533,6 +2533,7 @@ app.post("/api/match-end-choice/:roomId", (req, res) => {
 
 app.post(
   "/api/reward-claim-info/:roomId",
+  requireWixBackend,
   (req, res) => {
 
     cleanupRooms();
@@ -2544,9 +2545,12 @@ app.post(
       rooms[roomId];
 
     if (!room) {
+
       return res.status(404).json({
-        error: "Room not found"
+        error: "Room not found",
+        reason: "room_not_found"
       });
+
     }
 
     const playerId =
@@ -2555,9 +2559,12 @@ app.post(
         : "";
 
     if (!playerId) {
+
       return res.status(400).json({
-        error: "playerId is required"
+        error: "playerId is required",
+        reason: "missing_player_id"
       });
+
     }
 
     const participantInfo =
@@ -2567,45 +2574,63 @@ app.post(
       );
 
     if (!participantInfo) {
+
       return res.status(403).json({
-        error: "Player is not in this room"
+        error:
+          "Player is not in this room",
+
+        reason:
+          "player_not_in_room"
       });
+
     }
 
     /*
       報酬はランダムマッチのみ
     */
+
     if (room.type !== "random") {
+
       return res.json({
         eligible: false,
         reason: "not_random_match"
       });
+
     }
 
     /*
       同一アカウント同士のRoomでは
-      報酬請求も拒否する
+      報酬請求を拒否
     */
+
     if (
       room.participants.attack.memberId &&
       room.participants.attack.memberId ===
       room.participants.defense.memberId
     ) {
+
       return res.json({
         eligible: false,
         reason: "same_member_id"
       });
+
     }
 
     /*
-      最終結果へ到達していなければ
+      最終結果へ到達していなければ、
       報酬はまだ確定していない
     */
-    if (room.phase !== "final_result") {
+
+    if (
+      room.phase !==
+      "final_result"
+    ) {
+
       return res.json({
         eligible: false,
         reason: "match_not_finished"
       });
+
     }
 
     const participant =
@@ -2615,14 +2640,19 @@ app.post(
       participantInfo.data;
 
     /*
-      memberIdがなければWix Dataへ
-      紐づけられない
+      Wix DataのAccountへ
+      紐づけるmemberIdが必要
     */
-    if (!participantData.memberId) {
+
+    if (
+      !participantData.memberId
+    ) {
+
       return res.json({
         eligible: false,
         reason: "missing_member_id"
       });
+
     }
 
     const reward =
@@ -2633,16 +2663,21 @@ app.post(
       );
 
     if (!reward.eligible) {
-      return res.json(reward);
+
+      return res.json(
+        reward
+      );
+
     }
 
     return res.json({
       ...reward,
 
       /*
-        次回、Wixバックエンド側で
-        ログイン中memberIdとの一致を確認する
+        Wixバックエンド側で、
+        ログイン中の本人IDと照合する
       */
+
       memberId:
         participantData.memberId
     });
