@@ -1689,185 +1689,373 @@ app.post(
   }
 );
 /* =====================
-   状態取得
+   状態取得・接続確認
 ===================== */
-app.get("/api/room-state/:roomId", (req, res) => {
 
-  cleanupRooms();
+app.get(
+  "/api/room-state/:roomId",
+  (req, res) => {
 
-  const room = rooms[req.params.roomId];
+    /*
+      現時点では旧cleanupRoomsも
+      引き続き動かしておく
+    */
 
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
-    });
-  }
+    cleanupRooms();
 
-  room.lastAccess = Date.now();
+    const roomId =
+      req.params.roomId;
 
-  const viewerPlayerId =
-    typeof req.query.playerId === "string"
-      ? req.query.playerId
-      : null;
+    const room =
+      rooms[roomId];
 
-  const publicParticipants =
-    createPublicParticipants(
+    if (!room) {
+
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
+
+    }
+
+    /*
+      古いRoomにも
+      ライフサイクル項目を補完
+    */
+
+    ensureRoomLifecycle(
+      room
+    );
+
+    /*
+      queryのplayerIdから
+      Room参加者本人かを確認
+    */
+
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.query
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    const viewerPlayerId =
+      auth.access.playerId;
+
+    /*
+      試合開始時から固定のParticipant
+      attack / defense
+    */
+
+    const viewerParticipant =
+      auth.access.participant;
+
+    /*
+      このプレイヤーが現在接続していることを記録
+    */
+
+    touchParticipantPresence(
       room,
-      viewerPlayerId
+      viewerParticipant
     );
 
-  /* =====================
-     現在の攻守プレイヤー取得
-  ===================== */
+    /*
+      旧cleanupRoomsとの一時的な互換用。
 
-  const attackPlayer =
-    getRolePlayer(room, "attack");
+      第23回③でcleanupRoomsを
+      新TTL方式へ置き換えたあと削除する。
+    */
 
-  const defensePlayer =
-    getRolePlayer(room, "defense");
+    room.lastAccess =
+      Date.now();
 
-  const placementInfo = {
+    const publicParticipants =
+      createPublicParticipants(
+        room,
+        viewerPlayerId
+      );
 
-    attackCount:
-      attackPlayer.placedCards.length,
+    /*
+      Participant単位の接続状態
+    */
 
-    defenseCount:
-      defensePlayer.placedCards.length,
+    const connectionState =
+      getRoomConnectionState(
+        room
+      );
 
-    attackCards:
-      attackPlayer.placedCards,
+    /* =====================
+       現在の攻守プレイヤー取得
+    ===================== */
 
-    defenseCards:
-      defensePlayer.placedCards
+    const attackPlayer =
+      getRolePlayer(
+        room,
+        "attack"
+      );
 
-  };
+    const defensePlayer =
+      getRolePlayer(
+        room,
+        "defense"
+      );
 
-  // 再戦・終了選択状況
-  const matchEnd = {
-    attack: room.rematchState?.attack ?? null,
-    defense: room.rematchState?.defense ?? null
-  };
+    const placementInfo = {
 
-  const rewardRemainingCount =
-    Math.max(
-      0,
-      RANDOM_REWARD_LIMIT_PER_ROOM - room.rewardMatchCount
-    );
+      attackCount:
+        attackPlayer
+          .placedCards
+          .length,
 
-  if (room.phase === "final_result") {
+      defenseCount:
+        defensePlayer
+          .placedCards
+          .length,
 
-    const attackScore =
-      room.totalScore.attack;
+      attackCards:
+        attackPlayer
+          .placedCards,
 
-    const defenseScore =
-      room.totalScore.defense;
+      defenseCards:
+        defensePlayer
+          .placedCards
 
-    let winner =
-      "draw";
+    };
 
-    if (attackScore > defenseScore) {
-      winner = "attack";
+    /*
+      再戦・終了選択状況
+    */
+
+    const matchEnd = {
+
+      attack:
+        room.rematchState
+          ?.attack ??
+        null,
+
+      defense:
+        room.rematchState
+          ?.defense ??
+        null
+
+    };
+
+    const rewardRemainingCount =
+      Math.max(
+        0,
+
+        RANDOM_REWARD_LIMIT_PER_ROOM -
+          room.rewardMatchCount
+      );
+
+    /* =====================
+       最終結果
+    ===================== */
+
+    if (
+      room.phase ===
+      "final_result"
+    ) {
+
+      const attackScore =
+        room.totalScore.attack;
+
+      const defenseScore =
+        room.totalScore.defense;
+
+      let winner =
+        "draw";
+
+      if (
+        attackScore >
+        defenseScore
+      ) {
+
+        winner =
+          "attack";
+
+      }
+
+      if (
+        defenseScore >
+        attackScore
+      ) {
+
+        winner =
+          "defense";
+
+      }
+
+      return res.json({
+
+        type:
+          room.type,
+
+        phase:
+          room.phase,
+
+        roles:
+          room.roles,
+
+        /*
+          このリクエストを送った本人の
+          Participant固定スロット
+        */
+
+        viewerParticipant,
+
+        participants:
+          publicParticipants,
+
+        /*
+          Participant固定の接続状態
+        */
+
+        connectionState,
+
+        result: {
+
+          attackScore,
+
+          defenseScore,
+
+          attackBinary:
+            room.finalBinary.attack,
+
+          defenseBinary:
+            room.finalBinary.defense,
+
+          winner
+
+        },
+
+        round:
+          room.round,
+
+        totalScore:
+          room.totalScore,
+
+        finalBinary:
+          room.finalBinary,
+
+        rewardMatchCount:
+          room.rewardMatchCount,
+
+        rewardRemainingCount,
+
+        rewardResult:
+          room.rewardResult ??
+          null,
+
+        matchNumber:
+          room.matchNumber ??
+          1,
+
+        placementInfo,
+
+        openInfo:
+          room.openInfo ??
+          null,
+
+        openReady:
+          room.openReady ??
+          null,
+
+        lastReplaceIndex:
+          room.lastReplaceIndex ??
+          null,
+
+        nextRoundReady:
+          room.nextRoundReady ??
+          null,
+
+        rematchState:
+          room.rematchState,
+
+        matchEnd
+
+      });
+
     }
 
-    if (defenseScore > attackScore) {
-      winner = "defense";
-    }
+    /* =====================
+       通常の対戦状態
+    ===================== */
 
     return res.json({
 
-      type: room.type,
+      type:
+        room.type,
 
-      phase: room.phase,
+      phase:
+        room.phase,
 
-      roles: room.roles,
+      roles:
+        room.roles,
 
-      participants: publicParticipants,
+      viewerParticipant,
 
-      result: {
+      participants:
+        publicParticipants,
 
-        attackScore,
+      connectionState,
 
-        defenseScore,
+      battleState:
+        room.battleState,
 
-        attackBinary: room.finalBinary.attack,
+      round:
+        room.round,
 
-        defenseBinary: room.finalBinary.defense,
+      totalScore:
+        room.totalScore,
 
-        winner
-
-      },
-
-      round: room.round,
-
-      totalScore: room.totalScore,
-
-      finalBinary: room.finalBinary,
-
-      rewardMatchCount: room.rewardMatchCount,
+      rewardMatchCount:
+        room.rewardMatchCount,
 
       rewardRemainingCount,
 
-      rewardResult: room.rewardResult ?? null,
+      rewardResult:
+        room.rewardResult ??
+        null,
 
-      matchNumber: room.matchNumber ?? 1,
+      matchNumber:
+        room.matchNumber ??
+        1,
 
       placementInfo,
 
-      openInfo: room.openInfo ?? null,
+      openInfo:
+        room.openInfo ??
+        null,
 
-      openReady: room.openReady ?? null,
+      openReady:
+        room.openReady ??
+        null,
 
-      lastReplaceIndex: room.lastReplaceIndex ?? null,
+      lastReplaceIndex:
+        room.lastReplaceIndex ??
+        null,
 
-      nextRoundReady: room.nextRoundReady ?? null,
+      nextRoundReady:
+        room.nextRoundReady ??
+        null,
 
-      rematchState: room.rematchState,
+      rematchState:
+        room.rematchState,
 
       matchEnd
 
     });
+
   }
-
-  return res.json({
-
-    type: room.type,
-
-    phase: room.phase,
-
-    roles: room.roles,
-
-    participants: publicParticipants,
-
-    battleState: room.battleState,
-
-    round: room.round,
-
-    totalScore: room.totalScore,
-
-    rewardMatchCount: room.rewardMatchCount,
-
-    rewardRemainingCount,
-
-    rewardResult: room.rewardResult ?? null,
-
-    matchNumber: room.matchNumber ?? 1,
-
-    placementInfo,
-
-    openInfo: room.openInfo ?? null,
-
-    openReady: room.openReady ?? null,
-
-    lastReplaceIndex: room.lastReplaceIndex ?? null,
-
-    nextRoundReady: room.nextRoundReady ?? null,
-
-    rematchState: room.rematchState,
-
-    matchEnd
-
-  });
-});
+);
 
 /* =====================
    PlayerIdからParticipantを取得
