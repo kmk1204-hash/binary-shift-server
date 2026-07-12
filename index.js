@@ -186,7 +186,53 @@ function cleanupRandomTickets() {
   }
 }
 
+/* =====================
+   Roomと関連Ticketの削除
+===================== */
 
+function removeRoomAndRelatedTickets(
+  roomId,
+  reason = "unknown"
+) {
+
+  for (
+    const ticketId of
+    Object.keys(randomTickets)
+  ) {
+
+    const ticket =
+      randomTickets[ticketId];
+
+    if (
+      ticket?.roomId !== roomId
+    ) {
+      continue;
+    }
+
+    delete randomTickets[
+      ticketId
+    ];
+
+    if (
+      waitingRandomTicketId === ticketId
+    ) {
+
+      waitingRandomTicketId =
+        null;
+
+    }
+
+  }
+
+  delete rooms[
+    roomId
+  ];
+
+  console.log(
+    `Room removed: ${roomId} (${reason})`
+  );
+
+}
 
 
 /* =====================
