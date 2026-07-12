@@ -2128,211 +2128,407 @@ app.post(
 );
 
 /* =====================
-   openフェーズ：defenseが公開情報を確定
+   openフェーズ：
+   defenseが公開情報を確定
 ===================== */
-app.post("/api/open/:roomId", (req, res) => {
 
-  const room = rooms[req.params.roomId];
+app.post(
+  "/api/open/:roomId",
+  (req, res) => {
 
-  if (!room) {
-    return res.status(404).json({
-      error: "Room not found"
-    });
-  }
+    const room =
+      rooms[req.params.roomId];
 
-  const { role, selectedIndexes } = req.body;
+    if (!room) {
 
-  if (room.phase !== "open") {
-    return res.status(400).json({
-      error: "Not open phase"
-    });
-  }
-
-  if (role !== "defense") {
-    return res.status(400).json({
-      error: "Only defense can open"
-    });
-  }
-
-  if (room.openInfo && room.openInfo.completed) {
-    return res.status(400).json({
-      error: "Open already completed"
-    });
-  }
-
-  if (!Array.isArray(selectedIndexes)) {
-    return res.status(400).json({
-      error: "Invalid selected indexes"
-    });
-  }
-
-  if (selectedIndexes.length > 3) {
-    return res.status(400).json({
-      error: "Too many selected cards"
-    });
-  }
-
-  /* =====================
-     現在の攻守プレイヤー取得
-  ===================== */
-
-  const defensePlayer =
-    getRolePlayer(room, "defense");
-
-  const attackPlayer =
-    getRolePlayer(room, "attack");
-
-  const defenseCards =
-    defensePlayer.placedCards;
-
-  const attackCards =
-    attackPlayer.placedCards;
-
-  if (
-    defenseCards.length !== 3 ||
-    attackCards.length !== 3
-  ) {
-    return res.status(400).json({
-      error: "Build not completed"
-    });
-  }
-
-  const indexSet = new Set();
-
-  for (const rawIndex of selectedIndexes) {
-
-    const index = Number(rawIndex);
-
-    if (!Number.isInteger(index)) {
-      return res.status(400).json({
-        error: "Invalid selected index"
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
       });
+
     }
 
-    if (index < 0 || index > 2) {
+    if (
+      room.phase !==
+      "open"
+    ) {
+
       return res.status(400).json({
-        error: "Selected index out of range"
+        error: "Not open phase",
+        reason: "invalid_phase"
       });
+
     }
 
-    if (indexSet.has(index)) {
-      return res.status(400).json({
-        error: "Duplicate selected index"
-      });
+    /*
+      playerIdから本人と現在のRoleを判定
+    */
+
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
     }
 
-    indexSet.add(index);
+    const role =
+      auth.access.role;
 
-  }
+    /*
+      公開内容を確定できるのは
+      現在のdefenseだけ
+    */
 
-  const selectedCards =
-    [...indexSet].map(index => defenseCards[index]);
+    if (role !== "defense") {
 
-  const defenseOpen =
-    countCards(selectedCards);
+      return res.status(403).json({
+        error: "Only defense can open",
+        reason: "defense_only"
+      });
 
-  const scoutCount =
-    Math.max(0, defenseOpen.total - 1);
+    }
 
-  const attackScouted =
-    makeScoutCounts(
-      attackCards,
-      scoutCount
-    );
+    if (
+      room.openInfo &&
+      room.openInfo.completed
+    ) {
 
-  room.openInfo = {
+      return res.status(400).json({
+        error: "Open already completed",
+        reason: "open_already_completed"
+      });
 
-    completed: true,
+    }
 
-    defenseOpen,
+    const selectedIndexes =
+      req.body?.selectedIndexes;
 
-    attackScouted
+    if (
+      !Array.isArray(
+        selectedIndexes
+      )
+    ) {
 
-  };
+      return res.status(400).json({
+        error: "Invalid selected indexes",
+        reason: "invalid_selected_indexes"
+      });
 
-  room.openReady = {
+    }
 
-    attack: false,
+    if (
+      selectedIndexes.length > 3
+    ) {
 
-    defense: false
+      return res.status(400).json({
+        error: "Too many selected cards",
+        reason: "too_many_selected_cards"
+      });
 
-  };
+    }
 
-  room.phase = "open";
+    /*
+      現在の攻守プレイヤー取得
+    */
 
-  room.battleState = null;
+    const defensePlayer =
+      getRolePlayer(
+        room,
+        "defense"
+      );
 
-  return res.json({
+    const attackPlayer =
+      getRolePlayer(
+        room,
+        "attack"
+      );
 
-    success: true,
+    const defenseCards =
+      defensePlayer.placedCards;
 
-    phase: room.phase,
+    const attackCards =
+      attackPlayer.placedCards;
 
-    openInfo: room.openInfo,
+    if (
+      defenseCards.length !== 3 ||
+      attackCards.length !== 3
+    ) {
 
-    openReady: room.openReady,
+      return res.status(400).json({
+        error: "Build not completed",
+        reason: "build_not_completed"
+      });
 
-    battleState: room.battleState
+    }
 
-  });
+    /*
+      選択位置の検証
+    */
 
-});
+    const indexSet =
+      new Set();
 
-/* =====================
-   open確認完了
-===================== */
-app.post("/api/open-ready/:roomId", (req, res) => {
-  const room = rooms[req.params.roomId];
-  if (!room) return res.status(404).json({ error: "Room not found" });
+    for (
+      const rawIndex of
+      selectedIndexes
+    ) {
 
-  const { role } = req.body;
+      const index =
+        Number(rawIndex);
 
-  if (room.phase !== "open") {
-    return res.status(400).json({ error: "Not open phase" });
-  }
+      if (
+        !Number.isInteger(index)
+      ) {
 
-  if (role !== "attack" && role !== "defense") {
-    return res.status(400).json({ error: "Invalid role" });
-  }
+        return res.status(400).json({
+          error: "Invalid selected index",
+          reason: "invalid_selected_index"
+        });
 
-  if (!room.openInfo || !room.openInfo.completed) {
-    return res.status(400).json({ error: "Open not completed" });
-  }
+      }
 
-  if (!room.openReady) {
+      if (
+        index < 0 ||
+        index > 2
+      ) {
+
+        return res.status(400).json({
+          error: "Selected index out of range",
+          reason: "selected_index_out_of_range"
+        });
+
+      }
+
+      if (
+        indexSet.has(index)
+      ) {
+
+        return res.status(400).json({
+          error: "Duplicate selected index",
+          reason: "duplicate_selected_index"
+        });
+
+      }
+
+      indexSet.add(index);
+
+    }
+
+    const selectedCards =
+      [...indexSet].map(
+        index =>
+          defenseCards[index]
+      );
+
+    const defenseOpen =
+      countCards(
+        selectedCards
+      );
+
+    const scoutCount =
+      Math.max(
+        0,
+        defenseOpen.total - 1
+      );
+
+    const attackScouted =
+      makeScoutCounts(
+        attackCards,
+        scoutCount
+      );
+
+    room.openInfo = {
+      completed: true,
+      defenseOpen,
+      attackScouted
+    };
+
     room.openReady = {
       attack: false,
       defense: false
     };
-  }
 
-  room.openReady[role] = true;
+    room.phase =
+      "open";
 
-  // まだ両者確認完了ではない
-  if (!room.openReady.attack || !room.openReady.defense) {
+    room.battleState =
+      null;
+
     return res.json({
       success: true,
-      waiting: true,
-      phase: room.phase,
-      openInfo: room.openInfo,
-      openReady: room.openReady,
-      battleState: room.battleState
+
+      phase:
+        room.phase,
+
+      role,
+
+      openInfo:
+        room.openInfo,
+
+      openReady:
+        room.openReady,
+
+      battleState:
+        room.battleState
     });
+
   }
+);
 
-  // 両者確認完了 → battle開始
-  room.phase = "battle";
-  initializeBattleState(room);
+/* =====================
+   open確認完了
+===================== */
 
-  return res.json({
-    success: true,
-    waiting: false,
-    phase: room.phase,
-    openInfo: room.openInfo,
-    openReady: room.openReady,
-    battleState: room.battleState
-  });
-});
+app.post(
+  "/api/open-ready/:roomId",
+  (req, res) => {
+
+    const room =
+      rooms[req.params.roomId];
+
+    if (!room) {
+
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
+
+    }
+
+    if (
+      room.phase !==
+      "open"
+    ) {
+
+      return res.status(400).json({
+        error: "Not open phase",
+        reason: "invalid_phase"
+      });
+
+    }
+
+    /*
+      playerIdから本人と現在のRoleを判定
+    */
+
+    const auth =
+      requireRoomPlayer(
+        room,
+        req.body
+      );
+
+    if (!auth.ok) {
+
+      return res
+        .status(auth.status)
+        .json(auth.response);
+
+    }
+
+    const role =
+      auth.access.role;
+
+    if (
+      !room.openInfo ||
+      !room.openInfo.completed
+    ) {
+
+      return res.status(400).json({
+        error: "Open not completed",
+        reason: "open_not_completed"
+      });
+
+    }
+
+    if (!room.openReady) {
+
+      room.openReady = {
+        attack: false,
+        defense: false
+      };
+
+    }
+
+    /*
+      サーバーがplayerIdから判定したRoleを
+      ready状態へ反映する
+    */
+
+    room.openReady[role] =
+      true;
+
+    /*
+      まだ両者確認完了ではない
+    */
+
+    if (
+      !room.openReady.attack ||
+      !room.openReady.defense
+    ) {
+
+      return res.json({
+        success: true,
+
+        waiting: true,
+
+        role,
+
+        phase:
+          room.phase,
+
+        openInfo:
+          room.openInfo,
+
+        openReady:
+          room.openReady,
+
+        battleState:
+          room.battleState
+      });
+
+    }
+
+    /*
+      両者確認完了
+      → battle開始
+    */
+
+    room.phase =
+      "battle";
+
+    initializeBattleState(
+      room
+    );
+
+    return res.json({
+      success: true,
+
+      waiting: false,
+
+      role,
+
+      phase:
+        room.phase,
+
+      openInfo:
+        room.openInfo,
+
+      openReady:
+        room.openReady,
+
+      battleState:
+        room.battleState
+    });
+
+  }
+);
 
 /* =====================
    Battle（step1〜6）
