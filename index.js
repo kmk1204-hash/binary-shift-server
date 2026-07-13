@@ -820,6 +820,10 @@ function resetRoomForRematch(room) {
   room.rewardAppliedThisMatch = false;
   room.rewardResult = null;
 
+  room.finalResultAt = null;
+
+  room.closedAt = null;
+
   resetRoomForBuild(room);
 
   room.rematchState = {
@@ -1254,7 +1258,7 @@ app.post(
       rooms[roomId];
 
     /*
-      すでにRoom削除済みなら
+      すでにRoom削除済みなら、
       離脱完了として扱う
     */
 
@@ -1262,10 +1266,24 @@ app.post(
 
       return res.json({
         success: true,
-        alreadyRemoved: true
+        alreadyRemoved: true,
+        roomRemoved: true
       });
 
     }
+
+    /*
+      古いRoomにも
+      ライフサイクル情報を補完
+    */
+
+    ensureRoomLifecycle(
+      room
+    );
+
+    /*
+      playerIdから本人を認証
+    */
 
     const auth =
       requireRoomPlayer(
@@ -1282,7 +1300,9 @@ app.post(
     }
 
     /*
-      leaveStateもParticipant固定スロットで管理する
+      leaveStateは、
+      試合開始時から固定の
+      Participant単位で管理する
     */
 
     const participant =
@@ -1297,86 +1317,182 @@ app.post(
 
     }
 
+    /*
+      離脱操作もRoomへの操作なので、
+      最終操作時刻を更新する
+    */
+
+    touchRoomActivity(
+      room
+    );
+
+    /*
+      明示的に離脱したParticipantは
+      接続中として扱わない
+    */
+
+    if (
+      room.connectionState?.[
+        participant
+      ]
+    ) {
+
+      room.connectionState[
+        participant
+      ].lastSeenAt =
+        null;
+
+    }
+
+    /*
+      同じ離脱リクエストが再送されても、
+      trueを設定するだけなので安全
+    */
+
     room.leaveState[
       participant
     ] = true;
 
+    const bothPlayersLeft =
+      room.leaveState.attack === true &&
+      room.leaveState.defense === true;
+
     /*
-      両者離脱済みならRoomを即削除
+      まだ片方だけの離脱
     */
 
-    if (
-      room.leaveState.attack &&
-      room.leaveState.defense
-    ) {
-
-      /*
-        このRoomに紐づく
-        Random Match ticketも削除
-      */
-
-      for (
-        const ticketId of
-        Object.keys(randomTickets)
-      ) {
-
-        if (
-          randomTickets[
-            ticketId
-          ]?.roomId ===
-          roomId
-        ) {
-
-          delete randomTickets[
-            ticketId
-          ];
-
-          if (
-            waitingRandomTicketId ===
-            ticketId
-          ) {
-
-            waitingRandomTicketId =
-              null;
-
-          }
-
-        }
-
-      }
-
-      delete rooms[
-        roomId
-      ];
+    if (!bothPlayersLeft) {
 
       return res.json({
         success: true,
 
         alreadyRemoved: false,
 
-        roomRemoved: true,
+        roomRemoved: false,
 
-        participant
+        retainedForReward:
+          room.phase ===
+          "final_result",
+
+        participant,
+
+        phase:
+          room.phase,
+
+        leaveState:
+          room.leaveState
       });
 
     }
+
+    /*
+      両者の離脱が完了した時刻を記録
+    */
+
+    if (
+      !Number.isFinite(
+        room.closedAt
+      )
+    ) {
+
+      room.closedAt =
+        Date.now();
+
+    }
+
+    /* =====================
+       最終結果後
+    ===================== */
+
+    /*
+      final_resultのRoomは、
+      Wix側の報酬請求に必要なため
+      両者が離脱しても削除しない。
+
+      cleanupRooms()が
+      finalResultAtから24時間後に削除する。
+    */
+
+    if (
+      room.phase ===
+      "final_result"
+    ) {
+
+      /*
+        古いRoomなどで
+        finalResultAtがない場合の保険
+      */
+
+      if (
+        !Number.isFinite(
+          room.finalResultAt
+        )
+      ) {
+
+        room.finalResultAt =
+          Date.now();
+
+      }
+
+      return res.json({
+        success: true,
+
+        alreadyRemoved: false,
+
+        roomRemoved: false,
+
+        retainedForReward: true,
+
+        participant,
+
+        phase:
+          room.phase,
+
+        leaveState:
+          room.leaveState,
+
+        closedAt:
+          room.closedAt,
+
+        finalResultAt:
+          room.finalResultAt,
+
+        rewardGraceUntil:
+          room.finalResultAt +
+          FINAL_RESULT_GRACE_MS
+      });
+
+    }
+
+    /* =====================
+       最終結果前
+    ===================== */
+
+    /*
+      最終結果前に両者が離脱した場合は、
+      Roomと関連するRandom Match Ticketを
+      まとめて削除する
+    */
+
+    removeRoomAndRelatedTickets(
+      roomId,
+      "both_players_left"
+    );
 
     return res.json({
       success: true,
 
       alreadyRemoved: false,
 
-      roomRemoved: false,
+      roomRemoved: true,
 
-      participant,
+      retainedForReward: false,
 
-      leaveState:
-        room.leaveState
+      participant
     });
 
   }
 );
-
 /* =====================
    ランダムマッチ開始
 ===================== */
@@ -4504,7 +4620,11 @@ function finalizeRound(room) {
 
     applyRandomMatchReward(room);
 
-    room.phase = "final_result";
+    room.finalResultAt =
+      Date.now();
+
+    room.phase =
+      "final_result";
 
   }
 
