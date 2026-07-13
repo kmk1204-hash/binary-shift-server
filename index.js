@@ -1224,67 +1224,6 @@ app.post(
   }
 );
 
-
-/* =====================
-   ルーム参加
-===================== */
-
-app.post(
-  "/api/join-room/:roomId",
-  requireWixBackend,
-  (req, res) => {
-
-    const room =
-      rooms[req.params.roomId];
-
-    if (!room) {
-
-      return res.status(404).json({
-        error: "Room not found"
-      });
-
-    }
-
-    if (
-      room.participants.defense.playerId !==
-      null
-    ) {
-
-      return res.status(400).json({
-        error: "Room is full"
-      });
-
-    }
-
-    const member =
-      normalizeMemberInfo(req.body);
-
-    if (!member.memberId) {
-
-      return res.status(400).json({
-        error: "memberId is required",
-        reason: "missing_member_id"
-      });
-
-    }
-
-    const playerId =
-      generatePlayerId();
-
-    room.participants.defense.playerId =
-      playerId;
-
-    room.participants.defense.memberId =
-      member.memberId;
-
-    return res.json({
-      success: true,
-      playerId
-    });
-
-  }
-);
-
 /* =====================
    Room離脱
 ===================== */
@@ -3062,14 +3001,18 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Not placement phase",
-        reason: "invalid_phase"
+        error:
+          "Not placement phase",
+
+        reason:
+          "invalid_phase"
       });
 
     }
 
     /*
-      playerIdから本人と現在のRoleを判定
+      playerIdから本人と
+      現在のRoleを判定
     */
 
     const auth =
@@ -3105,7 +3048,8 @@ app.post(
     }
 
     /*
-      現在のRoleに対応する手札を取得
+      現在のRoleに対応する
+      プレイヤーデータを取得
     */
 
     const player =
@@ -3118,13 +3062,16 @@ app.post(
 
       return res.status(400).json({
         error: "Player not found",
-        reason: "player_data_not_found"
+
+        reason:
+          "player_data_not_found"
       });
 
     }
 
     if (
-      player.placedCards.length >= 3
+      player.placedCards.length >=
+      3
     ) {
 
       return res.status(400).json({
@@ -3151,13 +3098,18 @@ app.post(
       );
 
     const attackCount =
-      attackPlayer.placedCards.length;
+      attackPlayer
+        .placedCards
+        .length;
 
     const defenseCount =
-      defensePlayer.placedCards.length;
+      defensePlayer
+        .placedCards
+        .length;
 
     /*
-      Build完了
+      両者のBuildが完了したら
+      Openへ進行
     */
 
     if (
@@ -3176,6 +3128,15 @@ app.post(
 
     }
 
+    /*
+      カード追加または
+      フェーズ進行が行われた
+    */
+
+    touchRoomActivity(
+      room
+    );
+
     return res.json({
       success: true,
 
@@ -3189,14 +3150,18 @@ app.post(
       defenseCount,
 
       placementInfo: {
+
         attackCount,
+
         defenseCount,
 
         attackCards:
-          attackPlayer.placedCards,
+          attackPlayer
+            .placedCards,
 
         defenseCards:
-          defensePlayer.placedCards
+          defensePlayer
+            .placedCards
       },
 
       openInfo:
@@ -3208,6 +3173,11 @@ app.post(
 
   }
 );
+
+/* =====================
+   openフェーズ：
+   defenseが公開情報を確定
+===================== */
 
 /* =====================
    openフェーズ：
@@ -3243,7 +3213,8 @@ app.post(
     }
 
     /*
-      playerIdから本人と現在のRoleを判定
+      playerIdから本人と
+      現在のRoleを判定
     */
 
     const auth =
@@ -3268,11 +3239,17 @@ app.post(
       現在のdefenseだけ
     */
 
-    if (role !== "defense") {
+    if (
+      role !==
+      "defense"
+    ) {
 
       return res.status(403).json({
-        error: "Only defense can open",
-        reason: "defense_only"
+        error:
+          "Only defense can open",
+
+        reason:
+          "defense_only"
       });
 
     }
@@ -3283,8 +3260,11 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Open already completed",
-        reason: "open_already_completed"
+        error:
+          "Open already completed",
+
+        reason:
+          "open_already_completed"
       });
 
     }
@@ -3299,19 +3279,26 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Invalid selected indexes",
-        reason: "invalid_selected_indexes"
+        error:
+          "Invalid selected indexes",
+
+        reason:
+          "invalid_selected_indexes"
       });
 
     }
 
     if (
-      selectedIndexes.length > 3
+      selectedIndexes.length >
+      3
     ) {
 
       return res.status(400).json({
-        error: "Too many selected cards",
-        reason: "too_many_selected_cards"
+        error:
+          "Too many selected cards",
+
+        reason:
+          "too_many_selected_cards"
       });
 
     }
@@ -3333,10 +3320,12 @@ app.post(
       );
 
     const defenseCards =
-      defensePlayer.placedCards;
+      defensePlayer
+        .placedCards;
 
     const attackCards =
-      attackPlayer.placedCards;
+      attackPlayer
+        .placedCards;
 
     if (
       defenseCards.length !== 3 ||
@@ -3344,8 +3333,11 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Build not completed",
-        reason: "build_not_completed"
+        error:
+          "Build not completed",
+
+        reason:
+          "build_not_completed"
       });
 
     }
@@ -3363,15 +3355,22 @@ app.post(
     ) {
 
       const index =
-        Number(rawIndex);
+        Number(
+          rawIndex
+        );
 
       if (
-        !Number.isInteger(index)
+        !Number.isInteger(
+          index
+        )
       ) {
 
         return res.status(400).json({
-          error: "Invalid selected index",
-          reason: "invalid_selected_index"
+          error:
+            "Invalid selected index",
+
+          reason:
+            "invalid_selected_index"
         });
 
       }
@@ -3382,24 +3381,34 @@ app.post(
       ) {
 
         return res.status(400).json({
-          error: "Selected index out of range",
-          reason: "selected_index_out_of_range"
+          error:
+            "Selected index out of range",
+
+          reason:
+            "selected_index_out_of_range"
         });
 
       }
 
       if (
-        indexSet.has(index)
+        indexSet.has(
+          index
+        )
       ) {
 
         return res.status(400).json({
-          error: "Duplicate selected index",
-          reason: "duplicate_selected_index"
+          error:
+            "Duplicate selected index",
+
+          reason:
+            "duplicate_selected_index"
         });
 
       }
 
-      indexSet.add(index);
+      indexSet.add(
+        index
+      );
 
     }
 
@@ -3442,6 +3451,14 @@ app.post(
 
     room.battleState =
       null;
+
+    /*
+      Defenseが公開情報を確定した
+    */
+
+    touchRoomActivity(
+      room
+    );
 
     return res.json({
       success: true,
@@ -3497,7 +3514,8 @@ app.post(
     }
 
     /*
-      playerIdから本人と現在のRoleを判定
+      playerIdから本人と
+      現在のRoleを判定
     */
 
     const auth =
@@ -3523,8 +3541,11 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Open not completed",
-        reason: "open_not_completed"
+        error:
+          "Open not completed",
+
+        reason:
+          "open_not_completed"
       });
 
     }
@@ -3539,21 +3560,26 @@ app.post(
     }
 
     /*
-      サーバーがplayerIdから判定したRoleを
-      ready状態へ反映する
+      playerIdから判定した
+      現在Roleをreadyへ反映
     */
 
-    room.openReady[role] =
-      true;
+    room.openReady[
+      role
+    ] = true;
 
     /*
-      まだ両者確認完了ではない
+      まだ片方だけ確認完了
     */
 
     if (
       !room.openReady.attack ||
       !room.openReady.defense
     ) {
+
+      touchRoomActivity(
+        room
+      );
 
       return res.json({
         success: true,
@@ -3579,13 +3605,17 @@ app.post(
 
     /*
       両者確認完了
-      → battle開始
+      → Battle開始
     */
 
     room.phase =
       "battle";
 
     initializeBattleState(
+      room
+    );
+
+    touchRoomActivity(
       room
     );
 
@@ -3667,11 +3697,37 @@ app.post(
     if (!bs) {
 
       return res.status(400).json({
-        error: "Battle state not found",
-        reason: "battle_state_not_found"
+        error:
+          "Battle state not found",
+
+        reason:
+          "battle_state_not_found"
       });
 
     }
+
+    /*
+      Battle成功時の共通レスポンス
+    */
+
+    const sendBattleSuccess =
+      () => {
+
+        touchRoomActivity(
+          room
+        );
+
+        return res.json({
+          success: true,
+
+          phase:
+            room.phase,
+
+          battleState:
+            bs
+        });
+
+      };
 
     const cardIndex =
       Number(
@@ -3693,8 +3749,11 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Invalid card index",
-        reason: "invalid_card_index"
+        error:
+          "Invalid card index",
+
+        reason:
+          "invalid_card_index"
       });
 
     }
@@ -3720,8 +3779,11 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Invalid position",
-        reason: "invalid_position"
+        error:
+          "Invalid position",
+
+        reason:
+          "invalid_position"
       });
 
     }
@@ -3737,7 +3799,8 @@ app.post(
       owner,
       faceValue,
       pos,
-      placedBy = bs.currentRole
+      placedBy =
+        bs.currentRole
     ) => {
 
       if (
@@ -3745,24 +3808,27 @@ app.post(
         pos >=
           bs.pointArea.length
       ) {
+
         throw new Error(
           "Invalid position"
         );
+
       }
 
       if (
         bs.pointArea[pos]
       ) {
+
         throw new Error(
           "Position filled"
         );
+
       }
 
       bs.pointArea[pos] = {
         card,
         owner,
-        face:
-          faceValue,
+        face: faceValue,
         placedBy
       };
 
@@ -3770,9 +3836,9 @@ app.post(
 
     try {
 
-      /* =====================
-         共通手番確認
-      ===================== */
+      /*
+        共通手番確認
+      */
 
       if (
         role !==
@@ -3786,26 +3852,33 @@ app.post(
 
       }
 
-      /* ===== step1 ===== */
+      /* =====================
+         step1
+      ===================== */
 
       if (
         bs.step === 1
       ) {
 
         if (
-          role !== "attack"
+          role !==
+          "attack"
         ) {
+
           throw new Error(
             "Not your turn"
           );
+
         }
 
         if (
           position !== 0
         ) {
+
           throw new Error(
             "Must left"
           );
+
         }
 
         const card =
@@ -3814,9 +3887,11 @@ app.post(
           ];
 
         if (!card) {
+
           throw new Error(
             "Invalid card"
           );
+
         }
 
         place(
@@ -3842,37 +3917,38 @@ app.post(
         bs.step =
           2;
 
-        return res.json({
-          success: true,
-          phase:
-            room.phase,
-          battleState:
-            bs
-        });
+        return sendBattleSuccess();
 
       }
 
-      /* ===== step2 ===== */
+      /* =====================
+         step2
+      ===================== */
 
       if (
         bs.step === 2
       ) {
 
         if (
-          role !== "defense"
+          role !==
+          "defense"
         ) {
+
           throw new Error(
             "Not your turn"
           );
+
         }
 
         if (
           face !==
           bs.forcedFace
         ) {
+
           throw new Error(
             "Forced"
           );
+
         }
 
         const card =
@@ -3881,9 +3957,11 @@ app.post(
           ];
 
         if (!card) {
+
           throw new Error(
             "Invalid card"
           );
+
         }
 
         place(
@@ -3907,28 +3985,27 @@ app.post(
         bs.step =
           3;
 
-        return res.json({
-          success: true,
-          phase:
-            room.phase,
-          battleState:
-            bs
-        });
+        return sendBattleSuccess();
 
       }
 
-      /* ===== step3 ===== */
+      /* =====================
+         step3
+      ===================== */
 
       if (
         bs.step === 3
       ) {
 
         if (
-          role !== "defense"
+          role !==
+          "defense"
         ) {
+
           throw new Error(
             "Not your turn"
           );
+
         }
 
         const card =
@@ -3937,9 +4014,11 @@ app.post(
           ];
 
         if (!card) {
+
           throw new Error(
             "Invalid card"
           );
+
         }
 
         place(
@@ -3965,37 +4044,38 @@ app.post(
         bs.step =
           4;
 
-        return res.json({
-          success: true,
-          phase:
-            room.phase,
-          battleState:
-            bs
-        });
+        return sendBattleSuccess();
 
       }
 
-      /* ===== step4 ===== */
+      /* =====================
+         step4
+      ===================== */
 
       if (
         bs.step === 4
       ) {
 
         if (
-          role !== "attack"
+          role !==
+          "attack"
         ) {
+
           throw new Error(
             "Not your turn"
           );
+
         }
 
         if (
           face !==
           bs.forcedFace
         ) {
+
           throw new Error(
             "Forced"
           );
+
         }
 
         const card =
@@ -4004,9 +4084,11 @@ app.post(
           ];
 
         if (!card) {
+
           throw new Error(
             "Invalid card"
           );
+
         }
 
         place(
@@ -4030,28 +4112,27 @@ app.post(
         bs.step =
           5;
 
-        return res.json({
-          success: true,
-          phase:
-            room.phase,
-          battleState:
-            bs
-        });
+        return sendBattleSuccess();
 
       }
 
-      /* ===== step5＋自動step6 ===== */
+      /* =====================
+         step5＋自動step6
+      ===================== */
 
       if (
         bs.step === 5
       ) {
 
         if (
-          role !== "attack"
+          role !==
+          "attack"
         ) {
+
           throw new Error(
             "Not your turn"
           );
+
         }
 
         const combined = [
@@ -4065,9 +4146,11 @@ app.post(
           ];
 
         if (!card) {
+
           throw new Error(
             "Invalid card"
           );
+
         }
 
         place(
@@ -4103,9 +4186,11 @@ app.post(
           bs.defenseHand[0];
 
         if (!lastCard) {
+
           throw new Error(
             "No card"
           );
+
         }
 
         const lastPosition =
@@ -4117,9 +4202,11 @@ app.post(
         if (
           lastPosition === -1
         ) {
+
           throw new Error(
             "No empty position"
           );
+
         }
 
         place(
@@ -4142,21 +4229,16 @@ app.post(
         bs.forcedFace =
           null;
 
-        return res.json({
-          success: true,
-
-          phase:
-            room.phase,
-
-          battleState:
-            bs
-        });
+        return sendBattleSuccess();
 
       }
 
       return res.status(400).json({
-        error: "Invalid battle step",
-        reason: "invalid_battle_step"
+        error:
+          "Invalid battle step",
+
+        reason:
+          "invalid_battle_step"
       });
 
     } catch (error) {
@@ -4168,53 +4250,86 @@ app.post(
         error.message ===
         "Not your turn"
       ) {
+
         reason =
           "not_your_turn";
+
       }
 
       if (
         error.message ===
         "Invalid card"
       ) {
+
         reason =
           "invalid_card";
+
       }
 
       if (
         error.message ===
         "Position filled"
       ) {
+
         reason =
           "position_filled";
+
       }
 
       if (
         error.message ===
         "Invalid position"
       ) {
+
         reason =
           "invalid_position";
+
       }
 
       if (
         error.message ===
         "Forced"
       ) {
+
         reason =
           "invalid_forced_face";
+
       }
 
       if (
         error.message ===
         "Must left"
       ) {
+
         reason =
           "step1_left_only";
+
+      }
+
+      if (
+        error.message ===
+        "No card"
+      ) {
+
+        reason =
+          "remaining_card_not_found";
+
+      }
+
+      if (
+        error.message ===
+        "No empty position"
+      ) {
+
+        reason =
+          "empty_position_not_found";
+
       }
 
       return res.status(400).json({
         error:
           error.message,
+
         reason
       });
 
@@ -4244,8 +4359,10 @@ app.post(
     }
 
     if (
-      room.phase !== "replace_attack" &&
-      room.phase !== "replace_defense"
+      room.phase !==
+        "replace_attack" &&
+      room.phase !==
+        "replace_defense"
     ) {
 
       return res.status(400).json({
@@ -4283,8 +4400,11 @@ app.post(
     if (!bs) {
 
       return res.status(400).json({
-        error: "Battle state not found",
-        reason: "battle_state_not_found"
+        error:
+          "Battle state not found",
+
+        reason:
+          "battle_state_not_found"
       });
 
     }
@@ -4302,15 +4422,18 @@ app.post(
       ) {
 
         const point =
-          battleState.pointArea[
-            startIndex + i
-          ];
+          battleState
+            .pointArea[
+              startIndex + i
+            ];
 
         if (
           point?.placedBy ===
           targetRole
         ) {
+
           return true;
+
         }
 
       }
@@ -4341,7 +4464,7 @@ app.post(
       }
 
       /*
-        スキップ
+        Attackがスキップ
       */
 
       if (
@@ -4356,6 +4479,10 @@ app.post(
 
         room.lastReplaceIndex =
           null;
+
+        touchRoomActivity(
+          room
+        );
 
         return res.json({
           success: true,
@@ -4373,7 +4500,9 @@ app.post(
       }
 
       if (
-        !Number.isInteger(index) ||
+        !Number.isInteger(
+          index
+        ) ||
         index < 0 ||
         index > 3
       ) {
@@ -4387,8 +4516,9 @@ app.post(
 
       const binary =
         bs.pointArea
-          .map(point =>
-            point.card
+          .map(
+            point =>
+              point.card
           )
           .join("");
 
@@ -4400,8 +4530,11 @@ app.post(
       ) {
 
         return res.status(400).json({
-          error: "Invalid pattern",
-          reason: "invalid_pattern"
+          error:
+            "Invalid pattern",
+
+          reason:
+            "invalid_pattern"
         });
 
       }
@@ -4415,8 +4548,11 @@ app.post(
       ) {
 
         return res.status(400).json({
-          error: "No own placed card",
-          reason: "no_own_placed_card"
+          error:
+            "No own placed card",
+
+          reason:
+            "no_own_placed_card"
         });
 
       }
@@ -4429,7 +4565,8 @@ app.post(
 
         bs.pointArea[
           index + i
-        ].card = "1";
+        ].card =
+          "1";
 
       }
 
@@ -4441,6 +4578,10 @@ app.post(
 
       bs.currentRole =
         "defense";
+
+      touchRoomActivity(
+        room
+      );
 
       return res.json({
         success: true,
@@ -4479,7 +4620,7 @@ app.post(
       }
 
       /*
-        スキップ
+        Defenseがスキップ
       */
 
       if (
@@ -4491,6 +4632,11 @@ app.post(
 
         room.lastReplaceIndex =
           null;
+
+        /*
+          finalizeRound内で
+          touchRoomActivityが実行される
+        */
 
         finalizeRound(
           room
@@ -4512,7 +4658,9 @@ app.post(
       }
 
       if (
-        !Number.isInteger(index) ||
+        !Number.isInteger(
+          index
+        ) ||
         index < 0 ||
         index > 3
       ) {
@@ -4541,8 +4689,9 @@ app.post(
 
       const binary =
         bs.pointArea
-          .map(point =>
-            point.card
+          .map(
+            point =>
+              point.card
           )
           .join("");
 
@@ -4554,8 +4703,11 @@ app.post(
       ) {
 
         return res.status(400).json({
-          error: "Invalid pattern",
-          reason: "invalid_pattern"
+          error:
+            "Invalid pattern",
+
+          reason:
+            "invalid_pattern"
         });
 
       }
@@ -4569,8 +4721,11 @@ app.post(
       ) {
 
         return res.status(400).json({
-          error: "No own placed card",
-          reason: "no_own_placed_card"
+          error:
+            "No own placed card",
+
+          reason:
+            "no_own_placed_card"
         });
 
       }
@@ -4583,7 +4738,8 @@ app.post(
 
         bs.pointArea[
           index + i
-        ].card = "0";
+        ].card =
+          "0";
 
       }
 
@@ -4592,6 +4748,11 @@ app.post(
 
       room.lastReplaceIndex =
         null;
+
+      /*
+        finalizeRound内で
+        touchRoomActivityが実行される
+      */
 
       finalizeRound(
         room
@@ -4795,14 +4956,18 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Not round result phase",
-        reason: "invalid_phase"
+        error:
+          "Not round result phase",
+
+        reason:
+          "invalid_phase"
       });
 
     }
 
     /*
-      playerIdから本人と現在のRoleを判定
+      playerIdから本人と
+      現在のRoleを判定
     */
 
     const auth =
@@ -4822,11 +4987,9 @@ app.post(
     const role =
       auth.access.role;
 
-    /*
-      ready状態がない場合の保険
-    */
-
-    if (!room.nextRoundReady) {
+    if (
+      !room.nextRoundReady
+    ) {
 
       room.nextRoundReady = {
         attack: false,
@@ -4835,22 +4998,22 @@ app.post(
 
     }
 
-    /*
-      サーバーが判定した現在Roleを
-      ready状態へ反映
-    */
-
-    room.nextRoundReady[role] =
-      true;
+    room.nextRoundReady[
+      role
+    ] = true;
 
     /*
-      片方だけ準備完了
+      まだ片方だけ準備完了
     */
 
     if (
       !room.nextRoundReady.attack ||
       !room.nextRoundReady.defense
     ) {
+
+      touchRoomActivity(
+        room
+      );
 
       return res.json({
         success: true,
@@ -4870,7 +5033,7 @@ app.post(
 
     /*
       両者準備完了
-      Round2へ移行
+      → Round2へ進行
     */
 
     room.round =
@@ -4886,6 +5049,10 @@ app.post(
 
     room.nextRoundReady =
       null;
+
+    touchRoomActivity(
+      room
+    );
 
     return res.json({
       success: true,
@@ -4936,8 +5103,11 @@ app.post(
     ) {
 
       return res.status(400).json({
-        error: "Not final result phase",
-        reason: "invalid_phase"
+        error:
+          "Not final result phase",
+
+        reason:
+          "invalid_phase"
       });
 
     }
@@ -4957,7 +5127,8 @@ app.post(
     }
 
     /*
-      再戦・終了状態はParticipant固定スロットで管理する
+      再戦・終了状態は
+      Participant固定スロットで管理
     */
 
     const participant =
@@ -4978,7 +5149,9 @@ app.post(
 
     }
 
-    if (!room.rematchState) {
+    if (
+      !room.rematchState
+    ) {
 
       room.rematchState = {
         attack: null,
@@ -5004,7 +5177,8 @@ app.post(
       return res.json({
         success: true,
 
-        alreadySelected: true,
+        alreadySelected:
+          true,
 
         action,
 
@@ -5017,18 +5191,22 @@ app.post(
           room.rematchState,
 
         matchEnd: {
+
           attack:
-            room.rematchState.attack,
+            room.rematchState
+              .attack,
 
           defense:
-            room.rematchState.defense
+            room.rematchState
+              .defense
         }
       });
 
     }
 
     /*
-      一度選択した後の変更は拒否
+      一度選択したあとの
+      選択変更は拒否
     */
 
     if (
@@ -5048,7 +5226,17 @@ app.post(
 
     room.rematchState[
       participant
-    ] = action;
+    ] =
+      action;
+
+    /*
+      再戦・終了選択が保存されたため、
+      Roomの最終操作時刻を更新
+    */
+
+    touchRoomActivity(
+      room
+    );
 
     const attackChoice =
       room.rematchState.attack;
@@ -5061,9 +5249,16 @@ app.post(
     */
 
     if (
-      attackChoice === "rematch" &&
-      defenseChoice === "rematch"
+      attackChoice ===
+        "rematch" &&
+      defenseChoice ===
+        "rematch"
     ) {
+
+      /*
+        resetRoomForRematch内でも
+        touchRoomActivityが実行される
+      */
 
       resetRoomForRematch(
         room
@@ -5072,9 +5267,11 @@ app.post(
       return res.json({
         success: true,
 
-        alreadySelected: false,
+        alreadySelected:
+          false,
 
-        rematchStarted: true,
+        rematchStarted:
+          true,
 
         action,
 
@@ -5101,17 +5298,18 @@ app.post(
     }
 
     /*
-      どちらかが終了を選択した場合、
-      相手側にも状態が見えるようにする。
-      Room削除はleave-roomで行う。
+      相手の選択待ち、
+      またはどちらかが終了を選択
     */
 
     return res.json({
       success: true,
 
-      alreadySelected: false,
+      alreadySelected:
+        false,
 
-      rematchStarted: false,
+      rematchStarted:
+        false,
 
       action,
 
@@ -5124,16 +5322,20 @@ app.post(
         room.rematchState,
 
       matchEnd: {
+
         attack:
-          room.rematchState.attack,
+          room.rematchState
+            .attack,
 
         defense:
-          room.rematchState.defense
+          room.rematchState
+            .defense
       }
     });
 
   }
 );
+
 /* =====================
    報酬確認API
    POST /api/reward-claim-info/:roomId
