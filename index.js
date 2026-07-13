@@ -1225,6 +1225,83 @@ app.post(
 );
 
 /* =====================
+   ルーム参加
+===================== */
+
+app.post(
+  "/api/join-room/:roomId",
+  requireWixBackend,
+  (req, res) => {
+    const roomId = req.params.roomId;
+    const room = rooms[roomId];
+
+    if (!room) {
+      return res.status(404).json({
+        error: "Room not found",
+        reason: "room_not_found"
+      });
+    }
+
+    ensureRoomLifecycle(room);
+
+    if (!room.participants?.defense) {
+      return res.status(500).json({
+        error: "Room participant data is invalid",
+        reason: "invalid_room_data"
+      });
+    }
+
+    if (room.participants.defense.playerId !== null) {
+      return res.status(409).json({
+        error: "Room is full",
+        reason: "room_full"
+      });
+    }
+
+    const member = normalizeMemberInfo(req.body);
+
+    if (!member.memberId) {
+      return res.status(400).json({
+        error: "memberId is required",
+        reason: "missing_member_id"
+      });
+    }
+
+    const playerId = generatePlayerId();
+
+    room.participants.defense.playerId = playerId;
+    room.participants.defense.memberId = member.memberId;
+
+    /*
+      前回の離脱情報が残っている場合に備えて、
+      参加時点のDefense状態を初期化する。
+    */
+    if (!room.leaveState) {
+      room.leaveState = {
+        attack: false,
+        defense: false
+      };
+    }
+
+    room.leaveState.defense = false;
+
+    if (room.connectionState?.defense) {
+      room.connectionState.defense.lastSeenAt = null;
+    }
+
+    touchRoomActivity(room);
+
+    return res.json({
+      success: true,
+      roomId,
+      playerId,
+      participant: "defense",
+      phase: room.phase
+    });
+  }
+);
+
+/* =====================
    Room離脱
 ===================== */
 
