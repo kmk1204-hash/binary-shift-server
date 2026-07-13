@@ -793,15 +793,30 @@ function resetRoomForBuild(room) {
 
 }
 
-function resetRoomForRematch(room) {
+/* =====================
+   再戦用Room初期化
+===================== */
+
+function resetRoomForRematch(
+  room
+) {
+
+  ensureRoomLifecycle(
+    room
+  );
 
   /*
     同一Room内の試合番号を進める
   */
-  room.matchNumber =
-    (room.matchNumber ?? 1) + 1;
 
-  room.round = 1;
+  room.matchNumber =
+    (
+      room.matchNumber ??
+      1
+    ) + 1;
+
+  room.round =
+    1;
 
   room.totalScore = {
     attack: 0,
@@ -814,17 +829,36 @@ function resetRoomForRematch(room) {
   };
 
   /*
-    新しい試合では報酬計算を再実行できるようにする。
-    rewardMatchCountはリセットしない。
+    新しい試合では
+    報酬計算を再実行できるようにする。
+
+    rewardMatchCountは
+    同一Room内の通算なのでリセットしない。
   */
-  room.rewardAppliedThisMatch = false;
-  room.rewardResult = null;
 
-  room.finalResultAt = null;
+  room.rewardAppliedThisMatch =
+    false;
 
-  room.closedAt = null;
+  room.rewardResult =
+    null;
 
-  resetRoomForBuild(room);
+  /*
+    前の試合の終了情報をリセット
+  */
+
+  room.finalResultAt =
+    null;
+
+  room.closedAt =
+    null;
+
+  /*
+    Build開始状態へ戻す
+  */
+
+  resetRoomForBuild(
+    room
+  );
 
   room.rematchState = {
     attack: null,
@@ -835,6 +869,14 @@ function resetRoomForRematch(room) {
     attack: false,
     defense: false
   };
+
+  /*
+    再戦開始もRoom操作として記録
+  */
+
+  touchRoomActivity(
+    room
+  );
 
 }
 
@@ -2224,6 +2266,20 @@ app.get(
 
         roles:
           room.roles,
+
+        finalResultAt:
+          room.finalResultAt,
+
+        rewardGraceUntil:
+          Number.isFinite(
+            room.finalResultAt
+          )
+            ? room.finalResultAt +
+              FINAL_RESULT_GRACE_MS
+            : null,
+
+        closedAt:
+          room.closedAt,
 
         /*
           このリクエストを送った本人の
@@ -4567,66 +4623,149 @@ app.post(
 /* =====================
    ラウンド終了
 ===================== */
-function finalizeRound(room) {
 
-  const bs = room.battleState;
+function finalizeRound(
+  room
+) {
+
+  ensureRoomLifecycle(
+    room
+  );
+
+  const bs =
+    room.battleState;
+
+  if (
+    !bs ||
+    !Array.isArray(
+      bs.pointArea
+    )
+  ) {
+
+    throw new Error(
+      "Battle state not found"
+    );
+
+  }
 
   const binary =
-    bs.pointArea.map(p => p.card).join("");
+    bs.pointArea
+      .map(point =>
+        point.card
+      )
+      .join("");
 
   const score =
-    parseInt(binary, 2);
+    parseInt(
+      binary,
+      2
+    );
 
   /* =====================
      現在のAttackプレイヤーへ加算
   ===================== */
 
-  const attackPlayer =
+  const attackParticipant =
     room.roles.attack;
 
-  room.totalScore[attackPlayer] += score;
+  room.totalScore[
+    attackParticipant
+  ] += score;
 
-  room.finalBinary[attackPlayer] = binary;
+  room.finalBinary[
+    attackParticipant
+  ] =
+    binary;
 
-  bs.finalBinary = binary;
-  bs.finalScore = score;
-  bs.currentRole = null;
+  bs.finalBinary =
+    binary;
 
-  room.lastReplaceIndex = null;
+  bs.finalScore =
+    score;
 
-  if (room.round === 1) {
+  bs.currentRole =
+    null;
+
+  room.lastReplaceIndex =
+    null;
+
+  /*
+    実際にゲーム状態が進んだため、
+    最終操作時刻を更新
+  */
+
+  touchRoomActivity(
+    room
+  );
+
+  /* =====================
+     Round1終了
+  ===================== */
+
+  if (
+    room.round === 1
+  ) {
 
     room.nextRoundReady = {
       attack: false,
       defense: false
     };
 
-    room.phase = "round_result";
-
-  } else {
-
-    room.nextRoundReady = null;
-
-    room.rematchState = {
-      attack: null,
-      defense: null
-    };
-
-    /* =====================
-       ランダムマッチ報酬処理
-       ※ room.type === "random" かつ
-          rewardMatchCount < 3 の場合のみ更新
-    ===================== */
-
-    applyRandomMatchReward(room);
+    /*
+      まだ試合全体は終了していない
+    */
 
     room.finalResultAt =
-      Date.now();
+      null;
+
+    room.closedAt =
+      null;
 
     room.phase =
-      "final_result";
+      "round_result";
+
+    return;
 
   }
+
+  /* =====================
+     Round2終了
+     → 最終結果
+  ===================== */
+
+  room.nextRoundReady =
+    null;
+
+  room.rematchState = {
+    attack: null,
+    defense: null
+  };
+
+  /*
+    ランダムマッチ報酬を計算
+  */
+
+  applyRandomMatchReward(
+    room
+  );
+
+  /*
+    最終結果へ到達した正確な時刻を記録
+  */
+
+  room.finalResultAt =
+    Date.now();
+
+  /*
+    まだ両者が離脱したわけではないため、
+    closedAtは空にしておく
+  */
+
+  room.closedAt =
+    null;
+
+  room.phase =
+    "final_result";
 
 }
 
