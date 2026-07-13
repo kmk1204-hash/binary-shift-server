@@ -1,4 +1,3 @@
-```js
 import express from "express";
 
 import cors from "cors";
@@ -492,9 +491,7 @@ function applyRandomMatchReward(room) {
     return room.rewardResult;
 }
 
-```
 
-```js
 app.post("/api/create-room", requireWixBackend, (req, res) => {
     const roomId = generateRoomId();
     const room = createInitialRoom("manual");
@@ -855,8 +852,7 @@ app.post("/api/random-match-cancel", (req, res) => {
     });
 });
 
-```
-```js
+
 app.get("/api/room-state/:roomId", (req, res) => {
     cleanupRooms();
     const roomId = req.params.roomId;
@@ -1183,9 +1179,7 @@ function createParticipantReward(roomId, room, participant) {
     };
 }
 
-```
 
-```js
 app.post("/api/placement/place/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
     if (!room) {
@@ -1414,9 +1408,7 @@ app.post("/api/open-ready/:roomId", (req, res) => {
     });
 });
 
-```
 
-```js
 app.post("/api/attack/place/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
     if (!room) {
@@ -1781,9 +1773,7 @@ app.post("/api/replace/:roomId", (req, res) => {
     });
 });
 
-```
 
-```js
 function finalizeRound(room) {
     ensureRoomLifecycle(room);
     const bs = room.battleState;
@@ -2041,5 +2031,4 @@ const PORT = process.env.PORT || 3e3;
 app.listen(PORT, () => {
     console.log("Binary Shift Server is running on port " + PORT);
 });
-```
 
