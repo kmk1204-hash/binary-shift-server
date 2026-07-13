@@ -1167,7 +1167,7 @@ function createParticipantReward(roomId, room, participant) {
         result = "win";
     }
     const matchNumber = room.matchNumber ?? 1;
-    const rewardId = `${roomId}_${matchNumber}_${participant}`;
+    const rewardId = roomId + "_" + matchNumber + "_" + participant;
     return {
         eligible: true,
         rewardId: rewardId,
@@ -2039,7 +2039,7 @@ if (typeof cleanupTimer.unref === "function") {
 const PORT = process.env.PORT || 3e3;
 
 app.listen(PORT, () => {
-    console.log(`Binary Shift Server is running on port ${PORT}`);
+    console.log("Binary Shift Server is running on port " + PORT);
 });
 ```
 
