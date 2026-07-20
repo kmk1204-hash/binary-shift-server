@@ -1452,7 +1452,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
             reason: "invalid_card_index"
         });
     }
-    if (face !== "表" && face !== "伏せ") {
+    if (face !== "表" && face !== "裏") {
         return res.status(400).json({
             error: "Invalid face",
             reason: "invalid_face"
@@ -1464,7 +1464,7 @@ app.post("/api/attack/place/:roomId", (req, res) => {
             reason: "invalid_position"
         });
     }
-    const reverseFace = value => value === "表" ? "伏せ" : "表";
+    const reverseFace = value => value === "表" ? "裏" : "表";
     const place = (card, owner, faceValue, pos, placedBy = bs.currentRole) => {
         if (pos < 0 || pos >= bs.pointArea.length) {
             throw new Error("Invalid position");
