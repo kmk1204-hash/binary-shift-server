@@ -476,6 +476,279 @@ function runCpuPlacement(room) {
     return true;
 }
 
+function createCpuOpenIndexes() {
+    const indexes = [ 0, 1, 2 ];
+
+    for (let i = indexes.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [ indexes[i], indexes[j] ] = [ indexes[j], indexes[i] ];
+    }
+
+    const openCount = Math.floor(Math.random() * 4);
+    return indexes.slice(0, openCount);
+}
+
+function applyOpenSelection(room, role, selectedIndexes) {
+    if (!room) {
+        return {
+            ok: false,
+            status: 404,
+            error: "Room not found",
+            reason: "room_not_found"
+        };
+    }
+
+    if (room.phase !== "open") {
+        return {
+            ok: false,
+            status: 400,
+            error: "Not open phase",
+            reason: "invalid_phase"
+        };
+    }
+
+    if (role !== "defense") {
+        return {
+            ok: false,
+            status: 403,
+            error: "Only defense can open",
+            reason: "defense_only"
+        };
+    }
+
+    if (room.openInfo?.completed) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Open already completed",
+            reason: "open_already_completed"
+        };
+    }
+
+    if (!Array.isArray(selectedIndexes)) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Invalid selected indexes",
+            reason: "invalid_selected_indexes"
+        };
+    }
+
+    if (selectedIndexes.length > 3) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Too many selected cards",
+            reason: "too_many_selected_cards"
+        };
+    }
+
+    const defensePlayer = getRolePlayer(room, "defense");
+    const attackPlayer = getRolePlayer(room, "attack");
+    const defenseCards = defensePlayer?.placedCards ?? [];
+    const attackCards = attackPlayer?.placedCards ?? [];
+
+    if (defenseCards.length !== 3 || attackCards.length !== 3) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Build not completed",
+            reason: "build_not_completed"
+        };
+    }
+
+    const indexSet = new Set();
+
+    for (const rawIndex of selectedIndexes) {
+        const index = Number(rawIndex);
+
+        if (!Number.isInteger(index)) {
+            return {
+                ok: false,
+                status: 400,
+                error: "Invalid selected index",
+                reason: "invalid_selected_index"
+            };
+        }
+
+        if (index < 0 || index > 2) {
+            return {
+                ok: false,
+                status: 400,
+                error: "Selected index out of range",
+                reason: "selected_index_out_of_range"
+            };
+        }
+
+        if (indexSet.has(index)) {
+            return {
+                ok: false,
+                status: 400,
+                error: "Duplicate selected index",
+                reason: "duplicate_selected_index"
+            };
+        }
+
+        indexSet.add(index);
+    }
+
+    const selectedCards =
+        [ ...indexSet ].map(index => defenseCards[index]);
+
+    const defenseOpen = countCards(selectedCards);
+    const scoutCount = Math.max(0, defenseOpen.total - 1);
+    const attackScouted = makeScoutCounts(attackCards, scoutCount);
+
+    room.openInfo = {
+        completed: true,
+        defenseOpen,
+        attackScouted
+    };
+
+    room.openReady = {
+        attack: false,
+        defense: false
+    };
+
+    room.battleState = null;
+    touchRoomActivity(room);
+
+    return {
+        ok: true,
+        role,
+        phase: room.phase,
+        openInfo: room.openInfo,
+        openReady: room.openReady
+    };
+}
+
+function applyOpenReady(room, role) {
+    if (!room) {
+        return {
+            ok: false,
+            status: 404,
+            error: "Room not found",
+            reason: "room_not_found"
+        };
+    }
+
+    if (room.phase !== "open") {
+        return {
+            ok: false,
+            status: 400,
+            error: "Not open phase",
+            reason: "invalid_phase"
+        };
+    }
+
+    if (role !== "attack" && role !== "defense") {
+        return {
+            ok: false,
+            status: 400,
+            error: "Invalid role",
+            reason: "invalid_role"
+        };
+    }
+
+    if (!room.openInfo?.completed) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Open not completed",
+            reason: "open_not_completed"
+        };
+    }
+
+    if (!room.openReady) {
+        room.openReady = {
+            attack: false,
+            defense: false
+        };
+    }
+
+    room.openReady[role] = true;
+
+    if (room.openReady.attack && room.openReady.defense) {
+        room.phase = "battle";
+        initializeBattleState(room);
+    }
+
+    touchRoomActivity(room);
+
+    return {
+        ok: true,
+        waiting: room.phase === "open",
+        role,
+        phase: room.phase,
+        openInfo: room.openInfo,
+        openReady: room.openReady,
+        battleState: room.battleState
+    };
+}
+
+function runCpuOpen(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        room.phase !== "open"
+    ) {
+        return false;
+    }
+
+    const cpuRole = getCpuRole(room);
+
+    if (!cpuRole) {
+        return false;
+    }
+
+    let changed = false;
+
+    if (!room.openInfo?.completed) {
+        if (cpuRole !== "defense") {
+            return false;
+        }
+
+        const openResult = applyOpenSelection(
+            room,
+            "defense",
+            createCpuOpenIndexes()
+        );
+
+        if (!openResult.ok) {
+            console.error(
+                "[CPU Open] Selection failed:",
+                openResult.reason
+            );
+
+            return false;
+        }
+
+        changed = true;
+    }
+
+    if (
+        room.phase === "open" &&
+        room.openInfo?.completed &&
+        room.openReady?.[cpuRole] !== true
+    ) {
+        const readyResult =
+            applyOpenReady(room, cpuRole);
+
+        if (!readyResult.ok) {
+            console.error(
+                "[CPU Open] Ready failed:",
+                readyResult.reason
+            );
+
+            return changed;
+        }
+
+        changed = true;
+    }
+
+    return changed;
+}
+
 function swapRoles(room) {
     const tmp = room.roles.attack;
     room.roles.attack = room.roles.defense;
@@ -1142,6 +1415,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     const viewerParticipant = auth.access.participant;
     touchParticipantPresence(room, viewerParticipant);
     runCpuPlacement(room);
+    runCpuOpen(room);
     const publicParticipants = createPublicParticipants(room, viewerPlayerId);
     const connectionState = getRoomConnectionState(room);
     const attackPlayer = getRolePlayer(room, "attack");
@@ -1504,6 +1778,7 @@ app.post("/api/placement/place/:roomId", (req, res) => {
     }
 
     runCpuPlacement(room);
+    runCpuOpen(room);
 
     const attackPlayer =
         getRolePlayer(room, "attack");
@@ -1536,101 +1811,41 @@ app.post("/api/placement/place/:roomId", (req, res) => {
 
 app.post("/api/open/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
-    if (room.phase !== "open") {
-        return res.status(400).json({
-            error: "Not open phase",
-            reason: "invalid_phase"
-        });
-    }
+
     const auth = requireRoomPlayer(room, req.body);
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const role = auth.access.role;
-    if (role !== "defense") {
-        return res.status(403).json({
-            error: "Only defense can open",
-            reason: "defense_only"
+
+    const result = applyOpenSelection(
+        room,
+        auth.access.role,
+        req.body?.selectedIndexes
+    );
+
+    if (!result.ok) {
+        return res.status(result.status).json({
+            error: result.error,
+            reason: result.reason
         });
     }
-    if (room.openInfo && room.openInfo.completed) {
-        return res.status(400).json({
-            error: "Open already completed",
-            reason: "open_already_completed"
-        });
-    }
-    const selectedIndexes = req.body?.selectedIndexes;
-    if (!Array.isArray(selectedIndexes)) {
-        return res.status(400).json({
-            error: "Invalid selected indexes",
-            reason: "invalid_selected_indexes"
-        });
-    }
-    if (selectedIndexes.length > 3) {
-        return res.status(400).json({
-            error: "Too many selected cards",
-            reason: "too_many_selected_cards"
-        });
-    }
-    const defensePlayer = getRolePlayer(room, "defense");
-    const attackPlayer = getRolePlayer(room, "attack");
-    const defenseCards = defensePlayer.placedCards;
-    const attackCards = attackPlayer.placedCards;
-    if (defenseCards.length !== 3 || attackCards.length !== 3) {
-        return res.status(400).json({
-            error: "Build not completed",
-            reason: "build_not_completed"
-        });
-    }
-    const indexSet = new Set;
-    for (const rawIndex of selectedIndexes) {
-        const index = Number(rawIndex);
-        if (!Number.isInteger(index)) {
-            return res.status(400).json({
-                error: "Invalid selected index",
-                reason: "invalid_selected_index"
-            });
-        }
-        if (index < 0 || index > 2) {
-            return res.status(400).json({
-                error: "Selected index out of range",
-                reason: "selected_index_out_of_range"
-            });
-        }
-        if (indexSet.has(index)) {
-            return res.status(400).json({
-                error: "Duplicate selected index",
-                reason: "duplicate_selected_index"
-            });
-        }
-        indexSet.add(index);
-    }
-    const selectedCards = [ ...indexSet ].map(index => defenseCards[index]);
-    const defenseOpen = countCards(selectedCards);
-    const scoutCount = Math.max(0, defenseOpen.total - 1);
-    const attackScouted = makeScoutCounts(attackCards, scoutCount);
-    room.openInfo = {
-        completed: true,
-        defenseOpen: defenseOpen,
-        attackScouted: attackScouted
-    };
-    room.openReady = {
-        attack: false,
-        defense: false
-    };
-    room.phase = "open";
-    room.battleState = null;
-    touchRoomActivity(room);
+
+    runCpuOpen(room);
+
     return res.json({
         success: true,
         phase: room.phase,
-        role: role,
+        role: auth.access.role,
         openInfo: room.openInfo,
         openReady: room.openReady,
         battleState: room.battleState
@@ -1639,55 +1854,40 @@ app.post("/api/open/:roomId", (req, res) => {
 
 app.post("/api/open-ready/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
-    if (room.phase !== "open") {
-        return res.status(400).json({
-            error: "Not open phase",
-            reason: "invalid_phase"
-        });
-    }
+
     const auth = requireRoomPlayer(room, req.body);
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const role = auth.access.role;
-    if (!room.openInfo || !room.openInfo.completed) {
-        return res.status(400).json({
-            error: "Open not completed",
-            reason: "open_not_completed"
+
+    const result = applyOpenReady(
+        room,
+        auth.access.role
+    );
+
+    if (!result.ok) {
+        return res.status(result.status).json({
+            error: result.error,
+            reason: result.reason
         });
     }
-    if (!room.openReady) {
-        room.openReady = {
-            attack: false,
-            defense: false
-        };
-    }
-    room.openReady[role] = true;
-    if (!room.openReady.attack || !room.openReady.defense) {
-        touchRoomActivity(room);
-        return res.json({
-            success: true,
-            waiting: true,
-            role: role,
-            phase: room.phase,
-            openInfo: room.openInfo,
-            openReady: room.openReady,
-            battleState: room.battleState
-        });
-    }
-    room.phase = "battle";
-    initializeBattleState(room);
-    touchRoomActivity(room);
+
+    runCpuOpen(room);
+
     return res.json({
         success: true,
-        waiting: false,
-        role: role,
+        waiting: room.phase === "open",
+        role: auth.access.role,
         phase: room.phase,
         openInfo: room.openInfo,
         openReady: room.openReady,
