@@ -322,6 +322,160 @@ function getRolePlayer(room, role) {
     return room.players[role];
 }
 
+function getCpuRole(room) {
+    const participant = room.cpu?.participant;
+
+    if (participant !== "attack" && participant !== "defense") {
+        return null;
+    }
+
+    if (room.roles.attack === participant) {
+        return "attack";
+    }
+
+    if (room.roles.defense === participant) {
+        return "defense";
+    }
+
+    return null;
+}
+
+function createCpuPlacementCards() {
+    const cards = [ 0, 0, 0, 1, 1, 1 ];
+
+    for (let i = cards.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [ cards[i], cards[j] ] = [ cards[j], cards[i] ];
+    }
+
+    return cards.slice(0, 3);
+}
+
+function applyPlacementCard(room, role, card) {
+    if (!room) {
+        return {
+            ok: false,
+            status: 404,
+            error: "Room not found",
+            reason: "room_not_found"
+        };
+    }
+
+    if (room.phase !== "placement") {
+        return {
+            ok: false,
+            status: 400,
+            error: "Not placement phase",
+            reason: "invalid_phase"
+        };
+    }
+
+    if (role !== "attack" && role !== "defense") {
+        return {
+            ok: false,
+            status: 400,
+            error: "Invalid role",
+            reason: "invalid_role"
+        };
+    }
+
+    if (card !== 0 && card !== 1) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Invalid card",
+            reason: "invalid_card"
+        };
+    }
+
+    const player = getRolePlayer(room, role);
+
+    if (!player) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Player not found",
+            reason: "player_data_not_found"
+        };
+    }
+
+    if (player.placedCards.length >= 3) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Already placed",
+            reason: "already_placed"
+        };
+    }
+
+    player.placedCards.push(card);
+
+    const attackPlayer = getRolePlayer(room, "attack");
+    const defensePlayer = getRolePlayer(room, "defense");
+    const attackCount = attackPlayer.placedCards.length;
+    const defenseCount = defensePlayer.placedCards.length;
+
+    if (attackCount === 3 && defenseCount === 3) {
+        room.phase = "open";
+        room.openInfo = createEmptyOpenInfo();
+        room.battleState = null;
+    }
+
+    touchRoomActivity(room);
+
+    return {
+        ok: true,
+        role,
+        phase: room.phase,
+        attackCount,
+        defenseCount
+    };
+}
+
+function runCpuPlacement(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        room.phase !== "placement"
+    ) {
+        return false;
+    }
+
+    const cpuRole = getCpuRole(room);
+
+    if (!cpuRole) {
+        return false;
+    }
+
+    const cpuPlayer = getRolePlayer(room, cpuRole);
+
+    if (!cpuPlayer || cpuPlayer.placedCards.length >= 3) {
+        return false;
+    }
+
+    const neededCount = 3 - cpuPlayer.placedCards.length;
+    const selectedCards = createCpuPlacementCards();
+
+    for (let i = 0; i < neededCount; i++) {
+        const result = applyPlacementCard(
+            room,
+            cpuRole,
+            selectedCards[i]
+        );
+
+        if (!result.ok) {
+            console.error(
+                "[CPU Placement] Failed:",
+                result.reason
+            );
+
+            return false;
+        }
+    }
+
+    return true;
+}
+
 function swapRoles(room) {
     const tmp = room.roles.attack;
     room.roles.attack = room.roles.defense;
@@ -339,6 +493,8 @@ function resetRoomForBuild(room) {
     room.lastReplaceIndex = null;
     room.nextRoundReady = null;
     room.phase = "placement";
+
+    runCpuPlacement(room);
 }
 
 function resetRoomForRematch(room) {
@@ -598,6 +754,7 @@ app.post("/api/create-cpu-room", requireWixBackend, (req, res) => {
     };
 
     rooms[roomId] = room;
+    runCpuPlacement(room);
 
     return res.json({
         success: true,
@@ -984,6 +1141,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     const viewerPlayerId = auth.access.playerId;
     const viewerParticipant = auth.access.participant;
     touchParticipantPresence(room, viewerParticipant);
+    runCpuPlacement(room);
     const publicParticipants = createPublicParticipants(room, viewerPlayerId);
     const connectionState = getRoomConnectionState(room);
     const attackPlayer = getRolePlayer(room, "attack");
@@ -1316,65 +1474,60 @@ function createParticipantReward(roomId, room, participant) {
 
 app.post("/api/placement/place/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
-    if (room.phase !== "placement") {
-        return res.status(400).json({
-            error: "Not placement phase",
-            reason: "invalid_phase"
-        });
-    }
+
     const auth = requireRoomPlayer(room, req.body);
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const role = auth.access.role;
-    const card = req.body?.card;
-    if (card !== 0 && card !== 1) {
-        return res.status(400).json({
-            error: "Invalid card",
-            reason: "invalid_card"
+
+    const result = applyPlacementCard(
+        room,
+        auth.access.role,
+        req.body?.card
+    );
+
+    if (!result.ok) {
+        return res.status(result.status).json({
+            error: result.error,
+            reason: result.reason
         });
     }
-    const player = getRolePlayer(room, role);
-    if (!player) {
-        return res.status(400).json({
-            error: "Player not found",
-            reason: "player_data_not_found"
-        });
-    }
-    if (player.placedCards.length >= 3) {
-        return res.status(400).json({
-            error: "Already placed",
-            reason: "already_placed"
-        });
-    }
-    player.placedCards.push(card);
-    const attackPlayer = getRolePlayer(room, "attack");
-    const defensePlayer = getRolePlayer(room, "defense");
-    const attackCount = attackPlayer.placedCards.length;
-    const defenseCount = defensePlayer.placedCards.length;
-    if (attackCount === 3 && defenseCount === 3) {
-        room.phase = "open";
-        room.openInfo = createEmptyOpenInfo();
-        room.battleState = null;
-    }
-    touchRoomActivity(room);
+
+    runCpuPlacement(room);
+
+    const attackPlayer =
+        getRolePlayer(room, "attack");
+
+    const defensePlayer =
+        getRolePlayer(room, "defense");
+
     return res.json({
         success: true,
         phase: room.phase,
-        role: role,
-        attackCount: attackCount,
-        defenseCount: defenseCount,
+        role: auth.access.role,
+        attackCount:
+            attackPlayer.placedCards.length,
+        defenseCount:
+            defensePlayer.placedCards.length,
         placementInfo: {
-            attackCount: attackCount,
-            defenseCount: defenseCount,
-            attackCards: attackPlayer.placedCards,
-            defenseCards: defensePlayer.placedCards
+            attackCount:
+                attackPlayer.placedCards.length,
+            defenseCount:
+                defensePlayer.placedCards.length,
+            attackCards:
+                attackPlayer.placedCards,
+            defenseCards:
+                defensePlayer.placedCards
         },
         openInfo: room.openInfo,
         battleState: room.battleState
