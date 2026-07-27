@@ -156,6 +156,22 @@ function generatePlayerId() {
     return Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
 }
 
+function normalizeCpuFirstRole(value) {
+    const role = typeof value === "string" ? value.trim() : "";
+    return [ "attack", "defense", "random" ].includes(role) ? role : null;
+}
+
+function resolveCpuParticipants(firstRole) {
+    const humanParticipant = firstRole === "random"
+        ? (Math.random() < .5 ? "attack" : "defense")
+        : firstRole;
+
+    return {
+        humanParticipant,
+        cpuParticipant: humanParticipant === "attack" ? "defense" : "attack"
+    };
+}
+
 function normalizeMemberInfo(body = {}) {
     const rawMemberId = typeof body.memberId === "string" ? body.memberId.trim() : "";
     const memberId = rawMemberId.length > 0 && rawMemberId.length <= 128 ? rawMemberId : null;
@@ -165,18 +181,32 @@ function normalizeMemberInfo(body = {}) {
 }
 
 function createPublicParticipants(room, viewerPlayerId) {
-    const attackIsYou = room.participants.attack.playerId === viewerPlayerId;
-    const defenseIsYou = room.participants.defense.playerId === viewerPlayerId;
+    const attackIsYou =
+        room.participants.attack.playerId === viewerPlayerId;
+
+    const defenseIsYou =
+        room.participants.defense.playerId === viewerPlayerId;
+
     return {
         attack: {
-            playerId: attackIsYou ? room.participants.attack.playerId : null,
+            playerId: attackIsYou
+                ? room.participants.attack.playerId
+                : null,
             isYou: attackIsYou,
-            joined: !!room.participants.attack.playerId
+            joined: !!room.participants.attack.playerId,
+            isComputer:
+                room.type === "cpu" &&
+                room.cpu?.participant === "attack"
         },
         defense: {
-            playerId: defenseIsYou ? room.participants.defense.playerId : null,
+            playerId: defenseIsYou
+                ? room.participants.defense.playerId
+                : null,
             isYou: defenseIsYou,
-            joined: !!room.participants.defense.playerId
+            joined: !!room.participants.defense.playerId,
+            isComputer:
+                room.type === "cpu" &&
+                room.cpu?.participant === "defense"
         }
     };
 }
@@ -219,6 +249,7 @@ function createInitialRoom(type = "manual") {
     const now = Date.now();
     const room = {
         type: type,
+        cpu: null,
         phase: "placement",
         round: 1,
         createdAt: now,
@@ -434,6 +465,15 @@ function applyRandomMatchReward(room) {
     if (room.rewardAppliedThisMatch) {
         return room.rewardResult;
     }
+    if (room.type === "cpu") {
+        room.rewardAppliedThisMatch = true;
+        room.rewardResult = {
+            applied: false,
+            reason: "cpu_match"
+        };
+        return room.rewardResult;
+    }
+
     if (room.type !== "random") {
         room.rewardAppliedThisMatch = true;
         room.rewardResult = {
@@ -509,6 +549,66 @@ app.post("/api/create-room", requireWixBackend, (req, res) => {
     return res.json({
         roomId: roomId,
         playerId: playerId
+    });
+});
+
+app.post("/api/create-cpu-room", requireWixBackend, (req, res) => {
+    cleanupRooms();
+
+    const member = normalizeMemberInfo(req.body);
+    const firstRole = normalizeCpuFirstRole(req.body?.firstRole);
+
+    if (!member.memberId) {
+        return res.status(400).json({
+            error: "memberId is required",
+            reason: "missing_member_id"
+        });
+    }
+
+    if (!firstRole) {
+        return res.status(400).json({
+            error: "firstRole must be attack, defense or random",
+            reason: "invalid_first_role"
+        });
+    }
+
+    const {
+        humanParticipant,
+        cpuParticipant
+    } = resolveCpuParticipants(firstRole);
+
+    const roomId = generateRoomId();
+    const humanPlayerId = generatePlayerId();
+    const cpuPlayerId = "cpu_" + generatePlayerId();
+    const room = createInitialRoom("cpu");
+
+    room.participants[humanParticipant] = {
+        playerId: humanPlayerId,
+        memberId: member.memberId
+    };
+
+    room.participants[cpuParticipant] = {
+        playerId: cpuPlayerId,
+        memberId: null
+    };
+
+    room.cpu = {
+        participant: cpuParticipant,
+        difficulty: "standard"
+    };
+
+    rooms[roomId] = room;
+
+    return res.json({
+        success: true,
+        roomId,
+        playerId: humanPlayerId,
+        participant: humanParticipant,
+        role: humanParticipant,
+        firstRole: humanParticipant,
+        cpuParticipant,
+        difficulty: room.cpu.difficulty,
+        phase: room.phase
     });
 });
 
@@ -591,6 +691,19 @@ app.post("/api/leave-room/:roomId", (req, res) => {
         room.connectionState[participant].lastSeenAt = null;
     }
     room.leaveState[participant] = true;
+
+    if (room.type === "cpu") {
+        removeRoomAndRelatedTickets(roomId);
+
+        return res.json({
+            success: true,
+            alreadyRemoved: false,
+            roomRemoved: true,
+            retainedForReward: false,
+            participant
+        });
+    }
+
     const bothPlayersLeft = room.leaveState.attack === true && room.leaveState.defense === true;
     if (!bothPlayersLeft) {
         return res.json({
@@ -898,6 +1011,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
         }
         return res.json({
             type: room.type,
+            cpu: room.cpu ?? null,
             phase: room.phase,
             roles: room.roles,
             finalResultAt: room.finalResultAt,
@@ -931,6 +1045,7 @@ app.get("/api/room-state/:roomId", (req, res) => {
     }
     return res.json({
         type: room.type,
+        cpu: room.cpu ?? null,
         phase: room.phase,
         roles: room.roles,
         viewerParticipant: viewerParticipant,
@@ -1116,17 +1231,36 @@ function isParticipantConnected(room, participant, now = Date.now()) {
 
 function getRoomConnectionState(room) {
     const now = Date.now();
+
     ensureRoomLifecycle(room);
-    return {
+
+    const state = {
         attack: {
-            connected: isParticipantConnected(room, "attack", now),
-            lastSeenAt: room.connectionState.attack.lastSeenAt
+            connected:
+                isParticipantConnected(room, "attack", now),
+            lastSeenAt:
+                room.connectionState.attack.lastSeenAt
         },
         defense: {
-            connected: isParticipantConnected(room, "defense", now),
-            lastSeenAt: room.connectionState.defense.lastSeenAt
+            connected:
+                isParticipantConnected(room, "defense", now),
+            lastSeenAt:
+                room.connectionState.defense.lastSeenAt
         }
     };
+
+    if (
+        room.type === "cpu" &&
+        room.cpu?.participant &&
+        state[room.cpu.participant]
+    ) {
+        state[room.cpu.participant] = {
+            connected: true,
+            lastSeenAt: null
+        };
+    }
+
+    return state;
 }
 
 function getLatestRoomTimestamp(room) {
