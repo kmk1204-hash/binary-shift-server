@@ -41,6 +41,14 @@ if (!BINARY_SHIFT_SERVER_KEY) {
     process.exit(1);
 }
 
+function getJstDateKey(timestamp = Date.now()) {
+    const date = new Date(
+        Number(timestamp) + 9 * 60 * 60 * 1000
+    );
+
+    return date.toISOString().slice(0, 10);
+}
+
 function safeCompareSecret(providedValue, expectedValue) {
     if (typeof providedValue !== "string" || typeof expectedValue !== "string") {
         return false;
@@ -2882,7 +2890,10 @@ function createParticipantReward(roomId, room, participant) {
             diff:
                 reward.diff,
             rewardMatchCount:
-                reward.rewardMatchCount
+                reward.rewardMatchCount,
+            rewardDate: getJstDateKey(
+                room.finalResultAt || Date.now()
+            )
         };
     }
     
