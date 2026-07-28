@@ -32,6 +32,10 @@ const RANDOM_REWARD_LIMIT_PER_ROOM = 3;
 
 const BINARY_SHIFT_SERVER_KEY = process.env.BINARY_SHIFT_SERVER_KEY || "";
 
+const CPU_WIN_POINT = 2;
+const CPU_DRAW_POINT = 1;
+const CPU_LOSE_POINT = 0;
+
 if (!BINARY_SHIFT_SERVER_KEY) {
     console.error("[Startup] BINARY_SHIFT_SERVER_KEY is not configured");
     process.exit(1);
@@ -338,6 +342,83 @@ function getCpuRole(room) {
     }
 
     return null;
+}
+
+function getCpuHumanParticipant(room) {
+    const cpuParticipant =
+        room?.cpu?.participant;
+
+    if (cpuParticipant === "attack") {
+        return "defense";
+    }
+
+    if (cpuParticipant === "defense") {
+        return "attack";
+    }
+
+    return null;
+}
+
+function prepareCpuRematchRoles(room) {
+    if (!room || room.type !== "cpu") {
+        return null;
+    }
+
+    const cpuParticipant =
+        room.cpu?.participant;
+
+    const humanParticipant =
+        room.cpu?.humanParticipant ||
+        getCpuHumanParticipant(room);
+
+    if (
+        !humanParticipant ||
+        !cpuParticipant ||
+        humanParticipant === cpuParticipant
+    ) {
+        return null;
+    }
+
+    const setting =
+        room.cpu?.firstRoleSetting;
+
+    let humanFirstRole;
+
+    if (setting === "random") {
+        humanFirstRole =
+            Math.random() < .5
+                ? "attack"
+                : "defense";
+    } else if (
+        setting === "attack" ||
+        setting === "defense"
+    ) {
+        humanFirstRole = setting;
+    } else {
+        humanFirstRole =
+            room.cpu?.currentHumanFirstRole ||
+            "attack";
+    }
+
+    if (humanFirstRole === "attack") {
+        room.roles = {
+            attack: humanParticipant,
+            defense: cpuParticipant
+        };
+    } else {
+        room.roles = {
+            attack: cpuParticipant,
+            defense: humanParticipant
+        };
+    }
+
+    room.cpu.humanParticipant =
+        humanParticipant;
+
+    room.cpu.currentHumanFirstRole =
+        humanFirstRole;
+
+    return humanFirstRole;
 }
 
 function createCpuPlacementCards() {
@@ -749,6 +830,970 @@ function runCpuOpen(room) {
     return changed;
 }
 
+function battleFailure(status, error, reason) {
+    return {
+        ok: false,
+        status,
+        error,
+        reason
+    };
+}
+
+function applyBattleAction(room, role, action = {}) {
+    if (!room) {
+        return battleFailure(
+            404,
+            "Room not found",
+            "room_not_found"
+        );
+    }
+
+    if (room.phase !== "battle") {
+        return battleFailure(
+            400,
+            "Not battle phase",
+            "invalid_phase"
+        );
+    }
+
+    const bs = room.battleState;
+
+    if (!bs) {
+        return battleFailure(
+            400,
+            "Battle state not found",
+            "battle_state_not_found"
+        );
+    }
+
+    if (role !== bs.currentRole) {
+        return battleFailure(
+            403,
+            "Not your turn",
+            "not_your_turn"
+        );
+    }
+
+    const cardIndex =
+        typeof action.cardIndex === "number"
+            ? action.cardIndex
+            : Number.NaN;
+
+    const position =
+        typeof action.position === "number"
+            ? action.position
+            : Number.NaN;
+
+    const face = action.face;
+
+    if (!Number.isInteger(cardIndex)) {
+        return battleFailure(
+            400,
+            "Invalid card index",
+            "invalid_card_index"
+        );
+    }
+
+    if (face !== "表" && face !== "裏") {
+        return battleFailure(
+            400,
+            "Invalid face",
+            "invalid_face"
+        );
+    }
+
+    if (
+        !Number.isInteger(position) ||
+        position < 0 ||
+        position > 5
+    ) {
+        return battleFailure(
+            400,
+            "Invalid position",
+            "invalid_position"
+        );
+    }
+
+    const reverseFace =
+        value => value === "表" ? "裏" : "表";
+
+    const place = (
+        card,
+        owner,
+        faceValue,
+        targetPosition,
+        placedBy = role
+    ) => {
+        if (
+            targetPosition < 0 ||
+            targetPosition >= bs.pointArea.length
+        ) {
+            throw new Error("Invalid position");
+        }
+
+        if (bs.pointArea[targetPosition]) {
+            throw new Error("Position filled");
+        }
+
+        bs.pointArea[targetPosition] = {
+            card,
+            owner,
+            face: faceValue,
+            placedBy
+        };
+    };
+
+    const success = () => {
+        touchRoomActivity(room);
+
+        return {
+            ok: true,
+            phase: room.phase,
+            battleState: bs
+        };
+    };
+
+    try {
+        if (bs.step === 1) {
+            if (role !== "attack") {
+                throw new Error("Not your turn");
+            }
+
+            if (position !== 0) {
+                throw new Error("Must left");
+            }
+
+            const card = bs.attackHand[cardIndex];
+
+            if (!card) {
+                throw new Error("Invalid card");
+            }
+
+            place(
+                card.value,
+                "attack",
+                face,
+                0
+            );
+
+            bs.attackHand.splice(cardIndex, 1);
+            bs.forcedFace = reverseFace(face);
+            bs.currentRole = "defense";
+            bs.step = 2;
+
+            return success();
+        }
+
+        if (bs.step === 2) {
+            if (role !== "defense") {
+                throw new Error("Not your turn");
+            }
+
+            if (face !== bs.forcedFace) {
+                throw new Error("Forced");
+            }
+
+            const card = bs.attackHand[cardIndex];
+
+            if (!card) {
+                throw new Error("Invalid card");
+            }
+
+            place(
+                card.value,
+                "attack",
+                face,
+                position
+            );
+
+            bs.attackHand.splice(cardIndex, 1);
+            bs.forcedFace = null;
+            bs.currentRole = "defense";
+            bs.step = 3;
+
+            return success();
+        }
+
+        if (bs.step === 3) {
+            if (role !== "defense") {
+                throw new Error("Not your turn");
+            }
+
+            const card = bs.defenseHand[cardIndex];
+
+            if (!card) {
+                throw new Error("Invalid card");
+            }
+
+            place(
+                card.value,
+                "defense",
+                face,
+                position
+            );
+
+            bs.defenseHand.splice(cardIndex, 1);
+            bs.forcedFace = reverseFace(face);
+            bs.currentRole = "attack";
+            bs.step = 4;
+
+            return success();
+        }
+
+        if (bs.step === 4) {
+            if (role !== "attack") {
+                throw new Error("Not your turn");
+            }
+
+            if (face !== bs.forcedFace) {
+                throw new Error("Forced");
+            }
+
+            const card = bs.defenseHand[cardIndex];
+
+            if (!card) {
+                throw new Error("Invalid card");
+            }
+
+            place(
+                card.value,
+                "defense",
+                face,
+                position
+            );
+
+            bs.defenseHand.splice(cardIndex, 1);
+            bs.forcedFace = null;
+            bs.currentRole = "attack";
+            bs.step = 5;
+
+            return success();
+        }
+
+        if (bs.step === 5) {
+            if (role !== "attack") {
+                throw new Error("Not your turn");
+            }
+
+            const combined = [
+                ...bs.attackHand,
+                ...bs.defenseHand
+            ];
+
+            const card = combined[cardIndex];
+
+            if (!card) {
+                throw new Error("Invalid card");
+            }
+
+            place(
+                card.value,
+                card.owner,
+                face,
+                position
+            );
+
+            if (card.owner === "attack") {
+                bs.attackHand =
+                    bs.attackHand.filter(
+                        item => item !== card
+                    );
+            } else {
+                bs.defenseHand =
+                    bs.defenseHand.filter(
+                        item => item !== card
+                    );
+            }
+
+            const lastCard =
+                bs.attackHand[0] ||
+                bs.defenseHand[0];
+
+            if (!lastCard) {
+                throw new Error("No card");
+            }
+
+            const lastPosition =
+                bs.pointArea.findIndex(
+                    point => !point
+                );
+
+            if (lastPosition === -1) {
+                throw new Error("No empty position");
+            }
+
+            place(
+                lastCard.value,
+                lastCard.owner,
+                "表",
+                lastPosition,
+                "defense"
+            );
+
+            bs.attackHand = [];
+            bs.defenseHand = [];
+            bs.currentRole = "attack";
+            bs.forcedFace = null;
+            room.phase = "replace_attack";
+
+            return success();
+        }
+
+        return battleFailure(
+            400,
+            "Invalid battle step",
+            "invalid_battle_step"
+        );
+    } catch (error) {
+        const reasons = {
+            "Not your turn": "not_your_turn",
+            "Invalid card": "invalid_card",
+            "Position filled": "position_filled",
+            "Invalid position": "invalid_position",
+            Forced: "invalid_forced_face",
+            "Must left": "step1_left_only",
+            "No card": "remaining_card_not_found",
+            "No empty position":
+                "empty_position_not_found"
+        };
+
+        return battleFailure(
+            400,
+            error.message,
+            reasons[error.message] ||
+                "battle_operation_failed"
+        );
+    }
+}
+
+function getRandomIndex(length) {
+    if (!Number.isInteger(length) || length <= 0) {
+        return null;
+    }
+
+    return Math.floor(Math.random() * length);
+}
+
+function getRandomBattleFace() {
+    return Math.random() < .5 ? "表" : "裏";
+}
+
+function getEmptyBattlePositions(battleState) {
+    if (!Array.isArray(battleState?.pointArea)) {
+        return [];
+    }
+
+    return battleState.pointArea
+        .map((point, index) => point ? null : index)
+        .filter(index => index !== null);
+}
+
+function createCpuBattleAction(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        room.phase !== "battle"
+    ) {
+        return null;
+    }
+
+    const bs = room.battleState;
+    const cpuRole = getCpuRole(room);
+
+    if (
+        !bs ||
+        !cpuRole ||
+        bs.currentRole !== cpuRole
+    ) {
+        return null;
+    }
+
+    const emptyPositions =
+        getEmptyBattlePositions(bs);
+
+    if (bs.step === 1) {
+        const cardIndex =
+            getRandomIndex(bs.attackHand.length);
+
+        if (cardIndex === null) return null;
+
+        return {
+            cardIndex,
+            face: getRandomBattleFace(),
+            position: 0
+        };
+    }
+
+    if (bs.step === 2) {
+        const cardIndex =
+            getRandomIndex(bs.attackHand.length);
+
+        const positionIndex =
+            getRandomIndex(emptyPositions.length);
+
+        if (
+            cardIndex === null ||
+            positionIndex === null ||
+            !bs.forcedFace
+        ) {
+            return null;
+        }
+
+        return {
+            cardIndex,
+            face: bs.forcedFace,
+            position: emptyPositions[positionIndex]
+        };
+    }
+
+    if (bs.step === 3) {
+        const cardIndex =
+            getRandomIndex(bs.defenseHand.length);
+
+        const positionIndex =
+            getRandomIndex(emptyPositions.length);
+
+        if (
+            cardIndex === null ||
+            positionIndex === null
+        ) {
+            return null;
+        }
+
+        return {
+            cardIndex,
+            face: getRandomBattleFace(),
+            position: emptyPositions[positionIndex]
+        };
+    }
+
+    if (bs.step === 4) {
+        const cardIndex =
+            getRandomIndex(bs.defenseHand.length);
+
+        const positionIndex =
+            getRandomIndex(emptyPositions.length);
+
+        if (
+            cardIndex === null ||
+            positionIndex === null ||
+            !bs.forcedFace
+        ) {
+            return null;
+        }
+
+        return {
+            cardIndex,
+            face: bs.forcedFace,
+            position: emptyPositions[positionIndex]
+        };
+    }
+
+    if (bs.step === 5) {
+        const combinedLength =
+            bs.attackHand.length +
+            bs.defenseHand.length;
+
+        const cardIndex =
+            getRandomIndex(combinedLength);
+
+        const positionIndex =
+            getRandomIndex(emptyPositions.length);
+
+        if (
+            cardIndex === null ||
+            positionIndex === null
+        ) {
+            return null;
+        }
+
+        return {
+            cardIndex,
+            face: getRandomBattleFace(),
+            position: emptyPositions[positionIndex]
+        };
+    }
+
+    return null;
+}
+
+function runCpuBattle(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        room.phase !== "battle"
+    ) {
+        return false;
+    }
+
+    let changed = false;
+
+    for (let guard = 0; guard < 6; guard++) {
+        const bs = room.battleState;
+        const cpuRole = getCpuRole(room);
+
+        if (
+            room.phase !== "battle" ||
+            !bs ||
+            !cpuRole ||
+            bs.currentRole !== cpuRole
+        ) {
+            break;
+        }
+
+        const action =
+            createCpuBattleAction(room);
+
+        if (!action) {
+            console.error(
+                "[CPU Battle] Legal action not found",
+                {
+                    step: bs.step,
+                    role: cpuRole
+                }
+            );
+
+            break;
+        }
+
+        const result = applyBattleAction(
+            room,
+            cpuRole,
+            action
+        );
+
+        if (!result.ok) {
+            console.error(
+                "[CPU Battle] Action failed:",
+                result.reason
+            );
+
+            break;
+        }
+
+        changed = true;
+    }
+
+    return changed;
+}
+
+function replaceFailure(status, error, reason) {
+    return {
+        ok: false,
+        status,
+        error,
+        reason
+    };
+}
+
+function hasOwnPlacedCard(battleState, startIndex, role) {
+    for (let i = 0; i < 3; i++) {
+        if (
+            battleState.pointArea[startIndex + i]?.placedBy ===
+            role
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function getReplacePattern(battleState, startIndex) {
+    return battleState.pointArea
+        .slice(startIndex, startIndex + 3)
+        .map(point => String(point?.card ?? ""))
+        .join("");
+}
+
+function getLegalReplaceIndexes(room, role) {
+    const bs = room?.battleState;
+
+    if (
+        !bs ||
+        !Array.isArray(bs.pointArea) ||
+        bs.pointArea.length !== 6
+    ) {
+        return [];
+    }
+
+    const expectedPattern =
+        role === "attack" ? "000" : "111";
+
+    return [ 0, 1, 2, 3 ].filter(index => {
+        if (
+            role === "defense" &&
+            index === room.lastReplaceIndex
+        ) {
+            return false;
+        }
+
+        return (
+            getReplacePattern(bs, index) ===
+                expectedPattern &&
+            hasOwnPlacedCard(bs, index, role)
+        );
+    });
+}
+
+function applyReplaceAction(room, role, rawIndex) {
+    if (!room) {
+        return replaceFailure(
+            404,
+            "Room not found",
+            "room_not_found"
+        );
+    }
+
+    if (
+        room.phase !== "replace_attack" &&
+        room.phase !== "replace_defense"
+    ) {
+        return replaceFailure(
+            400,
+            "Invalid phase",
+            "invalid_phase"
+        );
+    }
+
+    const bs = room.battleState;
+
+    if (
+        !bs ||
+        !Array.isArray(bs.pointArea) ||
+        bs.pointArea.length !== 6
+    ) {
+        return replaceFailure(
+            400,
+            "Battle state not found",
+            "battle_state_not_found"
+        );
+    }
+
+    const expectedRole =
+        room.phase === "replace_attack"
+            ? "attack"
+            : "defense";
+
+    if (role !== expectedRole) {
+        return replaceFailure(
+            403,
+            "Not your turn",
+            "not_your_turn"
+        );
+    }
+
+    const index = Number(rawIndex);
+
+    if (index === -1) {
+        if (role === "attack") {
+            room.phase = "replace_defense";
+            room.lastReplaceIndex = null;
+            bs.currentRole = "defense";
+            touchRoomActivity(room);
+        } else {
+            bs.currentRole = null;
+            room.lastReplaceIndex = null;
+            finalizeRound(room);
+        }
+
+        return {
+            ok: true,
+            phase: room.phase,
+            battleState: bs,
+            lastReplaceIndex:
+                room.lastReplaceIndex ?? null
+        };
+    }
+
+    if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index > 3
+    ) {
+        return replaceFailure(
+            400,
+            "Invalid index",
+            "invalid_index"
+        );
+    }
+
+    if (
+        role === "defense" &&
+        index === room.lastReplaceIndex
+    ) {
+        return replaceFailure(
+            400,
+            "Same position not allowed",
+            "same_position_not_allowed"
+        );
+    }
+
+    const expectedPattern =
+        role === "attack" ? "000" : "111";
+
+    if (
+        getReplacePattern(bs, index) !==
+        expectedPattern
+    ) {
+        return replaceFailure(
+            400,
+            "Invalid pattern",
+            "invalid_pattern"
+        );
+    }
+
+    if (!hasOwnPlacedCard(bs, index, role)) {
+        return replaceFailure(
+            400,
+            "No own placed card",
+            "no_own_placed_card"
+        );
+    }
+
+    const replacement =
+        role === "attack" ? "1" : "0";
+
+    for (let i = 0; i < 3; i++) {
+        bs.pointArea[index + i].card =
+            replacement;
+    }
+
+    if (role === "attack") {
+        room.lastReplaceIndex = index;
+        room.phase = "replace_defense";
+        bs.currentRole = "defense";
+        touchRoomActivity(room);
+    } else {
+        room.lastReplaceIndex = null;
+        bs.currentRole = null;
+        finalizeRound(room);
+    }
+
+    return {
+        ok: true,
+        phase: room.phase,
+        battleState: bs,
+        lastReplaceIndex:
+            room.lastReplaceIndex ?? null
+    };
+}
+
+function createCpuReplaceIndex(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        (
+            room.phase !== "replace_attack" &&
+            room.phase !== "replace_defense"
+        )
+    ) {
+        return null;
+    }
+
+    const cpuRole = getCpuRole(room);
+
+    const expectedRole =
+        room.phase === "replace_attack"
+            ? "attack"
+            : "defense";
+
+    if (!cpuRole || cpuRole !== expectedRole) {
+        return null;
+    }
+
+    const indexes =
+        getLegalReplaceIndexes(room, cpuRole);
+
+    if (indexes.length === 0) {
+        return -1;
+    }
+
+    /*
+      暫定CPU：
+      候補があっても20％でSkipする。
+    */
+    if (Math.random() < .2) {
+        return -1;
+    }
+
+    const randomIndex =
+        getRandomIndex(indexes.length);
+
+    return randomIndex === null
+        ? -1
+        : indexes[randomIndex];
+}
+
+function runCpuReplace(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        (
+            room.phase !== "replace_attack" &&
+            room.phase !== "replace_defense"
+        )
+    ) {
+        return false;
+    }
+
+    const cpuRole = getCpuRole(room);
+
+    const expectedRole =
+        room.phase === "replace_attack"
+            ? "attack"
+            : "defense";
+
+    if (!cpuRole || cpuRole !== expectedRole) {
+        return false;
+    }
+
+    const index =
+        createCpuReplaceIndex(room);
+
+    if (index === null) {
+        console.error(
+            "[CPU Replace] Legal action not found",
+            {
+                phase: room.phase,
+                role: cpuRole
+            }
+        );
+
+        return false;
+    }
+
+    const result =
+        applyReplaceAction(
+            room,
+            cpuRole,
+            index
+        );
+
+    if (!result.ok) {
+        console.error(
+            "[CPU Replace] Action failed:",
+            result.reason
+        );
+
+        return false;
+    }
+
+    return true;
+}
+
+function nextRoundFailure(status, error, reason) {
+    return {
+        ok: false,
+        status,
+        error,
+        reason
+    };
+}
+
+function applyNextRoundReady(room, role) {
+    if (!room) {
+        return nextRoundFailure(
+            404,
+            "Room not found",
+            "room_not_found"
+        );
+    }
+
+    if (room.phase !== "round_result") {
+        return nextRoundFailure(
+            400,
+            "Not round result phase",
+            "invalid_phase"
+        );
+    }
+
+    if (role !== "attack" && role !== "defense") {
+        return nextRoundFailure(
+            400,
+            "Invalid role",
+            "invalid_role"
+        );
+    }
+
+    if (!room.nextRoundReady) {
+        room.nextRoundReady = {
+            attack: false,
+            defense: false
+        };
+    }
+
+    room.nextRoundReady[role] = true;
+
+    if (
+        !room.nextRoundReady.attack ||
+        !room.nextRoundReady.defense
+    ) {
+        touchRoomActivity(room);
+
+        return {
+            ok: true,
+            waiting: true,
+            role,
+            phase: room.phase,
+            round: room.round,
+            roles: room.roles,
+            nextRoundReady: room.nextRoundReady
+        };
+    }
+
+    room.round = 2;
+    swapRoles(room);
+    resetRoomForBuild(room);
+    touchRoomActivity(room);
+
+    return {
+        ok: true,
+        waiting: false,
+        role,
+        phase: room.phase,
+        round: room.round,
+        roles: room.roles,
+        nextRoundReady: room.nextRoundReady
+    };
+}
+
+function runCpuRoundResult(room) {
+    if (
+        !room ||
+        room.type !== "cpu" ||
+        room.phase !== "round_result"
+    ) {
+        return false;
+    }
+
+    const cpuRole = getCpuRole(room);
+
+    if (!cpuRole) {
+        return false;
+    }
+
+    if (room.nextRoundReady?.[cpuRole] === true) {
+        return false;
+    }
+
+    const result = applyNextRoundReady(
+        room,
+        cpuRole
+    );
+
+    if (!result.ok) {
+        console.error(
+            "[CPU Round Result] Ready failed:",
+            result.reason
+        );
+
+        return false;
+    }
+
+    return true;
+}
+
 function swapRoles(room) {
     const tmp = room.roles.attack;
     room.roles.attack = room.roles.defense;
@@ -887,6 +1932,54 @@ function calculateRandomMatchReward(attackScore, defenseScore) {
     };
 }
 
+function calculateCpuMatchReward(room) {
+    const humanParticipant =
+        room.cpu?.humanParticipant ||
+        getCpuHumanParticipant(room);
+
+    if (
+        humanParticipant !== "attack" &&
+        humanParticipant !== "defense"
+    ) {
+        return null;
+    }
+
+    const attackScore = room.totalScore.attack;
+    const defenseScore = room.totalScore.defense;
+
+    let winner = "draw";
+
+    if (attackScore > defenseScore) {
+        winner = "attack";
+    } else if (defenseScore > attackScore) {
+        winner = "defense";
+    }
+
+    const result =
+        winner === "draw"
+            ? "draw"
+            : winner === humanParticipant
+                ? "win"
+                : "lose";
+
+    const point =
+        result === "win"
+            ? CPU_WIN_POINT
+            : result === "draw"
+                ? CPU_DRAW_POINT
+                : CPU_LOSE_POINT;
+
+    return {
+        winner,
+        result,
+        point,
+        humanParticipant,
+        attackScore,
+        defenseScore,
+        diff: Math.abs(attackScore - defenseScore)
+    };
+}
+
 function applyRandomMatchReward(room) {
     if (!room) {
         return null;
@@ -895,11 +1988,36 @@ function applyRandomMatchReward(room) {
         return room.rewardResult;
     }
     if (room.type === "cpu") {
+        const reward = calculateCpuMatchReward(room);
+
         room.rewardAppliedThisMatch = true;
+
+        if (!reward) {
+            room.rewardResult = {
+                applied: false,
+                reason: "cpu_reward_failed"
+            };
+
+            return room.rewardResult;
+        }
+
+        room.rewardMatchCount++;
+
         room.rewardResult = {
-            applied: false,
-            reason: "cpu_match"
+            applied: true,
+            mode: "cpu",
+            winner: reward.winner,
+            result: reward.result,
+            humanParticipant:
+                reward.humanParticipant,
+            humanPoint: reward.point,
+            attackScore: reward.attackScore,
+            defenseScore: reward.defenseScore,
+            diff: reward.diff,
+            rewardMatchCount:
+                room.rewardMatchCount
         };
+
         return room.rewardResult;
     }
 
@@ -1023,6 +2141,9 @@ app.post("/api/create-cpu-room", requireWixBackend, (req, res) => {
 
     room.cpu = {
         participant: cpuParticipant,
+        humanParticipant,
+        firstRoleSetting: firstRole,
+        currentHumanFirstRole: humanParticipant,
         difficulty: "standard"
     };
 
@@ -1036,6 +2157,7 @@ app.post("/api/create-cpu-room", requireWixBackend, (req, res) => {
         participant: humanParticipant,
         role: humanParticipant,
         firstRole: humanParticipant,
+        firstRoleSetting: firstRole,
         cpuParticipant,
         difficulty: room.cpu.difficulty,
         phase: room.phase
@@ -1416,6 +2538,9 @@ app.get("/api/room-state/:roomId", (req, res) => {
     touchParticipantPresence(room, viewerParticipant);
     runCpuPlacement(room);
     runCpuOpen(room);
+    runCpuBattle(room);
+    runCpuReplace(room);
+    runCpuRoundResult(room);
     const publicParticipants = createPublicParticipants(room, viewerPlayerId);
     const connectionState = getRoomConnectionState(room);
     const attackPlayer = getRolePlayer(room, "attack");
@@ -1721,6 +2846,46 @@ function createParticipantReward(roomId, room, participant) {
             participant: participant
         };
     }
+    if (room.type === "cpu") {
+        if (
+            participant !==
+            reward.humanParticipant
+        ) {
+            return {
+                eligible: false,
+                reason: "cpu_not_human_player"
+            };
+        }
+
+        const matchNumber =
+            room.matchNumber ?? 1;
+
+        return {
+            eligible: true,
+            mode: "cpu",
+            rewardId:
+                roomId +
+                "_" +
+                matchNumber +
+                "_" +
+                participant,
+            roomId,
+            matchNumber,
+            participant,
+            point: Number(
+                reward.humanPoint ?? 0
+            ),
+            result:
+                reward.result || "lose",
+            winner:
+                reward.winner,
+            diff:
+                reward.diff,
+            rewardMatchCount:
+                reward.rewardMatchCount
+        };
+    }
+    
     const point = participant === "attack" ? reward.attackPoint : reward.defensePoint;
     let result = "lose";
     if (reward.winner === "draw") {
@@ -1841,6 +3006,8 @@ app.post("/api/open/:roomId", (req, res) => {
     }
 
     runCpuOpen(room);
+    runCpuBattle(room);
+    runCpuReplace(room);
 
     return res.json({
         success: true,
@@ -1883,6 +3050,8 @@ app.post("/api/open-ready/:roomId", (req, res) => {
     }
 
     runCpuOpen(room);
+    runCpuBattle(room);
+    runCpuReplace(room);
 
     return res.json({
         success: true,
@@ -1898,365 +3067,96 @@ app.post("/api/open-ready/:roomId", (req, res) => {
 
 app.post("/api/attack/place/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
-    if (room.phase !== "battle") {
-        return res.status(400).json({
-            error: "Not battle phase",
-            reason: "invalid_phase"
-        });
-    }
-    const auth = requireRoomPlayer(room, req.body);
+
+    const auth = requireRoomPlayer(
+        room,
+        req.body
+    );
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const role = auth.access.role;
-    const bs = room.battleState;
-    if (!bs) {
-        return res.status(400).json({
-            error: "Battle state not found",
-            reason: "battle_state_not_found"
-        });
-    }
-    const sendBattleSuccess = () => {
-        touchRoomActivity(room);
-        return res.json({
-            success: true,
-            phase: room.phase,
-            battleState: bs
-        });
-    };
-    const cardIndex = Number(req.body?.cardIndex);
-    const face = req.body?.face;
-    const position = Number(req.body?.position);
-    if (!Number.isInteger(cardIndex)) {
-        return res.status(400).json({
-            error: "Invalid card index",
-            reason: "invalid_card_index"
+
+    const result = applyBattleAction(
+        room,
+        auth.access.role,
+        {
+            cardIndex: req.body?.cardIndex,
+            face: req.body?.face,
+            position: req.body?.position
+        }
+    );
+
+    if (!result.ok) {
+        return res.status(result.status).json({
+            error: result.error,
+            reason: result.reason
         });
     }
-    if (face !== "表" && face !== "裏") {
-        return res.status(400).json({
-            error: "Invalid face",
-            reason: "invalid_face"
-        });
-    }
-    if (!Number.isInteger(position) || position < 0 || position > 5) {
-        return res.status(400).json({
-            error: "Invalid position",
-            reason: "invalid_position"
-        });
-    }
-    const reverseFace = value => value === "表" ? "裏" : "表";
-    const place = (card, owner, faceValue, pos, placedBy = bs.currentRole) => {
-        if (pos < 0 || pos >= bs.pointArea.length) {
-            throw new Error("Invalid position");
-        }
-        if (bs.pointArea[pos]) {
-            throw new Error("Position filled");
-        }
-        bs.pointArea[pos] = {
-            card: card,
-            owner: owner,
-            face: faceValue,
-            placedBy: placedBy
-        };
-    };
-    try {
-        if (role !== bs.currentRole) {
-            return res.status(403).json({
-                error: "Not your turn",
-                reason: "not_your_turn"
-            });
-        }
-        if (bs.step === 1) {
-            if (role !== "attack") {
-                throw new Error("Not your turn");
-            }
-            if (position !== 0) {
-                throw new Error("Must left");
-            }
-            const card = bs.attackHand[cardIndex];
-            if (!card) {
-                throw new Error("Invalid card");
-            }
-            place(card.value, "attack", face, 0);
-            bs.attackHand.splice(cardIndex, 1);
-            bs.forcedFace = reverseFace(face);
-            bs.currentRole = "defense";
-            bs.step = 2;
-            return sendBattleSuccess();
-        }
-        if (bs.step === 2) {
-            if (role !== "defense") {
-                throw new Error("Not your turn");
-            }
-            if (face !== bs.forcedFace) {
-                throw new Error("Forced");
-            }
-            const card = bs.attackHand[cardIndex];
-            if (!card) {
-                throw new Error("Invalid card");
-            }
-            place(card.value, "attack", face, position);
-            bs.attackHand.splice(cardIndex, 1);
-            bs.forcedFace = null;
-            bs.currentRole = "defense";
-            bs.step = 3;
-            return sendBattleSuccess();
-        }
-        if (bs.step === 3) {
-            if (role !== "defense") {
-                throw new Error("Not your turn");
-            }
-            const card = bs.defenseHand[cardIndex];
-            if (!card) {
-                throw new Error("Invalid card");
-            }
-            place(card.value, "defense", face, position);
-            bs.defenseHand.splice(cardIndex, 1);
-            bs.forcedFace = reverseFace(face);
-            bs.currentRole = "attack";
-            bs.step = 4;
-            return sendBattleSuccess();
-        }
-        if (bs.step === 4) {
-            if (role !== "attack") {
-                throw new Error("Not your turn");
-            }
-            if (face !== bs.forcedFace) {
-                throw new Error("Forced");
-            }
-            const card = bs.defenseHand[cardIndex];
-            if (!card) {
-                throw new Error("Invalid card");
-            }
-            place(card.value, "defense", face, position);
-            bs.defenseHand.splice(cardIndex, 1);
-            bs.forcedFace = null;
-            bs.currentRole = "attack";
-            bs.step = 5;
-            return sendBattleSuccess();
-        }
-        if (bs.step === 5) {
-            if (role !== "attack") {
-                throw new Error("Not your turn");
-            }
-            const combined = [ ...bs.attackHand, ...bs.defenseHand ];
-            const card = combined[cardIndex];
-            if (!card) {
-                throw new Error("Invalid card");
-            }
-            place(card.value, card.owner, face, position);
-            if (card.owner === "attack") {
-                bs.attackHand = bs.attackHand.filter(item => item !== card);
-            } else {
-                bs.defenseHand = bs.defenseHand.filter(item => item !== card);
-            }
-            const lastCard = bs.attackHand[0] || bs.defenseHand[0];
-            if (!lastCard) {
-                throw new Error("No card");
-            }
-            const lastPosition = bs.pointArea.findIndex(point => !point);
-            if (lastPosition === -1) {
-                throw new Error("No empty position");
-            }
-            place(lastCard.value, lastCard.owner, "表", lastPosition, "defense");
-            bs.attackHand = [];
-            bs.defenseHand = [];
-            room.phase = "replace_attack";
-            bs.currentRole = "attack";
-            bs.forcedFace = null;
-            return sendBattleSuccess();
-        }
-        return res.status(400).json({
-            error: "Invalid battle step",
-            reason: "invalid_battle_step"
-        });
-    } catch (error) {
-        let reason = "battle_operation_failed";
-        if (error.message === "Not your turn") {
-            reason = "not_your_turn";
-        }
-        if (error.message === "Invalid card") {
-            reason = "invalid_card";
-        }
-        if (error.message === "Position filled") {
-            reason = "position_filled";
-        }
-        if (error.message === "Invalid position") {
-            reason = "invalid_position";
-        }
-        if (error.message === "Forced") {
-            reason = "invalid_forced_face";
-        }
-        if (error.message === "Must left") {
-            reason = "step1_left_only";
-        }
-        if (error.message === "No card") {
-            reason = "remaining_card_not_found";
-        }
-        if (error.message === "No empty position") {
-            reason = "empty_position_not_found";
-        }
-        return res.status(400).json({
-            error: error.message,
-            reason: reason
-        });
-    }
+
+    runCpuBattle(room);
+    runCpuReplace(room);
+
+    return res.json({
+        success: true,
+        phase: room.phase,
+        battleState: room.battleState
+    });
 });
 
 app.post("/api/replace/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
-    if (room.phase !== "replace_attack" && room.phase !== "replace_defense") {
-        return res.status(400).json({
-            error: "Invalid phase",
-            reason: "invalid_phase"
-        });
-    }
-    const auth = requireRoomPlayer(room, req.body);
+
+    const auth =
+        requireRoomPlayer(room, req.body);
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const role = auth.access.role;
-    const index = Number(req.body?.index);
-    const bs = room.battleState;
-    if (!bs) {
-        return res.status(400).json({
-            error: "Battle state not found",
-            reason: "battle_state_not_found"
+
+    const result =
+        applyReplaceAction(
+            room,
+            auth.access.role,
+            req.body?.index
+        );
+
+    if (!result.ok) {
+        return res.status(result.status).json({
+            error: result.error,
+            reason: result.reason
         });
     }
-    function hasOwnPlacedCard(battleState, startIndex, targetRole) {
-        for (let i = 0; i < 3; i++) {
-            const point = battleState.pointArea[startIndex + i];
-            if (point?.placedBy === targetRole) {
-                return true;
-            }
-        }
-        return false;
-    }
-    if (room.phase === "replace_attack") {
-        if (role !== "attack") {
-            return res.status(403).json({
-                error: "Not your turn",
-                reason: "not_your_turn"
-            });
-        }
-        if (index === -1) {
-            room.phase = "replace_defense";
-            bs.currentRole = "defense";
-            room.lastReplaceIndex = null;
-            touchRoomActivity(room);
-            return res.json({
-                success: true,
-                phase: room.phase,
-                battleState: bs,
-                lastReplaceIndex: room.lastReplaceIndex
-            });
-        }
-        if (!Number.isInteger(index) || index < 0 || index > 3) {
-            return res.status(400).json({
-                error: "Invalid index",
-                reason: "invalid_index"
-            });
-        }
-        const binary = bs.pointArea.map(point => point.card).join("");
-        if (binary.substr(index, 3) !== "000") {
-            return res.status(400).json({
-                error: "Invalid pattern",
-                reason: "invalid_pattern"
-            });
-        }
-        if (!hasOwnPlacedCard(bs, index, "attack")) {
-            return res.status(400).json({
-                error: "No own placed card",
-                reason: "no_own_placed_card"
-            });
-        }
-        for (let i = 0; i < 3; i++) {
-            bs.pointArea[index + i].card = "1";
-        }
-        room.lastReplaceIndex = index;
-        room.phase = "replace_defense";
-        bs.currentRole = "defense";
-        touchRoomActivity(room);
-        return res.json({
-            success: true,
-            phase: room.phase,
-            battleState: bs,
-            lastReplaceIndex: room.lastReplaceIndex
-        });
-    }
-    if (room.phase === "replace_defense") {
-        if (role !== "defense") {
-            return res.status(403).json({
-                error: "Not your turn",
-                reason: "not_your_turn"
-            });
-        }
-        if (index === -1) {
-            bs.currentRole = null;
-            room.lastReplaceIndex = null;
-            finalizeRound(room);
-            return res.json({
-                success: true,
-                phase: room.phase,
-                battleState: bs,
-                lastReplaceIndex: null
-            });
-        }
-        if (!Number.isInteger(index) || index < 0 || index > 3) {
-            return res.status(400).json({
-                error: "Invalid index",
-                reason: "invalid_index"
-            });
-        }
-        if (index === room.lastReplaceIndex) {
-            return res.status(400).json({
-                error: "Same position not allowed",
-                reason: "same_position_not_allowed"
-            });
-        }
-        const binary = bs.pointArea.map(point => point.card).join("");
-        if (binary.substr(index, 3) !== "111") {
-            return res.status(400).json({
-                error: "Invalid pattern",
-                reason: "invalid_pattern"
-            });
-        }
-        if (!hasOwnPlacedCard(bs, index, "defense")) {
-            return res.status(400).json({
-                error: "No own placed card",
-                reason: "no_own_placed_card"
-            });
-        }
-        for (let i = 0; i < 3; i++) {
-            bs.pointArea[index + i].card = "0";
-        }
-        bs.currentRole = null;
-        room.lastReplaceIndex = null;
-        finalizeRound(room);
-        return res.json({
-            success: true,
-            phase: room.phase,
-            battleState: bs,
-            lastReplaceIndex: null
-        });
-    }
-    return res.status(400).json({
-        error: "Invalid phase",
-        reason: "invalid_phase"
+
+    runCpuReplace(room);
+    runCpuRoundResult(room);
+
+    return res.json({
+        success: true,
+        phase: room.phase,
+        battleState: room.battleState,
+        lastReplaceIndex:
+            room.lastReplaceIndex ?? null,
+        nextRoundReady:
+            room.nextRoundReady ?? null
     });
 });
 
@@ -2285,6 +3185,8 @@ function finalizeRound(room) {
         room.finalResultAt = null;
         room.closedAt = null;
         room.phase = "round_result";
+
+        runCpuRoundResult(room);
         return;
     }
     room.nextRoundReady = null;
@@ -2300,142 +3202,255 @@ function finalizeRound(room) {
 
 app.post("/api/next-round/:roomId", (req, res) => {
     const room = rooms[req.params.roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
-    if (room.phase !== "round_result") {
-        return res.status(400).json({
-            error: "Not round result phase",
-            reason: "invalid_phase"
-        });
-    }
-    const auth = requireRoomPlayer(room, req.body);
+
+    const auth = requireRoomPlayer(
+        room,
+        req.body
+    );
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const role = auth.access.role;
-    if (!room.nextRoundReady) {
-        room.nextRoundReady = {
-            attack: false,
-            defense: false
-        };
-    }
-    room.nextRoundReady[role] = true;
-    if (!room.nextRoundReady.attack || !room.nextRoundReady.defense) {
-        touchRoomActivity(room);
-        return res.json({
-            success: true,
-            waiting: true,
-            role: role,
-            phase: room.phase,
-            nextRoundReady: room.nextRoundReady
+
+    const result = applyNextRoundReady(
+        room,
+        auth.access.role
+    );
+
+    if (!result.ok) {
+        return res.status(result.status).json({
+            error: result.error,
+            reason: result.reason
         });
     }
-    room.round = 2;
-    swapRoles(room);
-    resetRoomForBuild(room);
-    room.nextRoundReady = null;
-    touchRoomActivity(room);
+
+    runCpuRoundResult(room);
+
     return res.json({
         success: true,
-        waiting: false,
-        role: role,
+        waiting: room.phase === "round_result",
+        role: auth.access.role,
         phase: room.phase,
         round: room.round,
         roles: room.roles,
-        nextRoundReady: room.nextRoundReady
+        nextRoundReady:
+            room.nextRoundReady ?? null
     });
 });
 
 app.post("/api/match-end-choice/:roomId", (req, res) => {
-    const room = rooms[req.params.roomId];
+    const roomId = req.params.roomId;
+    const room = rooms[roomId];
+
     if (!room) {
         return res.status(404).json({
             error: "Room not found",
             reason: "room_not_found"
         });
     }
+
     if (room.phase !== "final_result") {
         return res.status(400).json({
             error: "Not final result phase",
             reason: "invalid_phase"
         });
     }
-    const auth = requireRoomPlayer(room, req.body);
+
+    const auth =
+        requireRoomPlayer(room, req.body);
+
     if (!auth.ok) {
-        return res.status(auth.status).json(auth.response);
+        return res
+            .status(auth.status)
+            .json(auth.response);
     }
-    const participant = auth.access.participant;
-    const action = req.body?.action;
-    if (action !== "rematch" && action !== "exit") {
+
+    const participant =
+        auth.access.participant;
+
+    const action =
+        req.body?.action;
+
+    if (
+        action !== "rematch" &&
+        action !== "exit"
+    ) {
         return res.status(400).json({
             error: "Invalid action",
             reason: "invalid_action"
         });
     }
-    if (!room.rematchState) {
-        room.rematchState = {
-            attack: null,
-            defense: null
-        };
-    }
-    const existingAction = room.rematchState[participant];
-    if (existingAction === action) {
-        return res.json({
-            success: true,
-            alreadySelected: true,
-            action: action,
-            participant: participant,
-            phase: room.phase,
-            rematchState: room.rematchState,
-            matchEnd: {
-                attack: room.rematchState.attack,
-                defense: room.rematchState.defense
-            }
-        });
-    }
-    if (existingAction !== null && existingAction !== undefined) {
-        return res.status(409).json({
-            error: "Match end choice already selected",
-            reason: "choice_already_selected"
-        });
-    }
-    room.rematchState[participant] = action;
-    touchRoomActivity(room);
-    const attackChoice = room.rematchState.attack;
-    const defenseChoice = room.rematchState.defense;
-    if (attackChoice === "rematch" && defenseChoice === "rematch") {
+
+    /* CPU対戦 */
+
+    if (room.type === "cpu") {
+        const humanParticipant =
+            room.cpu?.humanParticipant ||
+            getCpuHumanParticipant(room);
+
+        if (
+            !humanParticipant ||
+            participant !== humanParticipant
+        ) {
+            return res.status(403).json({
+                error: "Only the human player can select",
+                reason: "human_player_only"
+            });
+        }
+
+        if (action === "exit") {
+            touchRoomActivity(room);
+            removeRoomAndRelatedTickets(roomId);
+
+            return res.json({
+                success: true,
+                cpuMatch: true,
+                alreadySelected: false,
+                action,
+                participant,
+                phase: "closed",
+                roomRemoved: true,
+                rematchStarted: false
+            });
+        }
+
+        const humanFirstRole =
+            prepareCpuRematchRoles(room);
+
+        if (!humanFirstRole) {
+            return res.status(500).json({
+                error: "CPU rematch role could not be prepared",
+                reason: "cpu_rematch_role_failed"
+            });
+        }
+
         resetRoomForRematch(room);
+
         return res.json({
             success: true,
+            cpuMatch: true,
             alreadySelected: false,
-            rematchStarted: true,
-            action: action,
-            participant: participant,
+            action,
+            participant,
             phase: room.phase,
             round: room.round,
             roles: room.roles,
-            rematchState: room.rematchState,
+            humanFirstRole,
+            firstRoleSetting:
+                room.cpu?.firstRoleSetting,
+            difficulty:
+                room.cpu?.difficulty ||
+                "standard",
+            matchNumber:
+                room.matchNumber ?? 1,
+            rematchStarted: true,
+            rematchState:
+                room.rematchState,
             matchEnd: {
                 attack: null,
                 defense: null
             }
         });
     }
+
+    /* 手動対戦・ランダム対戦 */
+
+    if (!room.rematchState) {
+        room.rematchState = {
+            attack: null,
+            defense: null
+        };
+    }
+
+    const existingAction =
+        room.rematchState[participant];
+
+    if (existingAction === action) {
+        return res.json({
+            success: true,
+            alreadySelected: true,
+            action,
+            participant,
+            phase: room.phase,
+            rematchState: room.rematchState,
+            matchEnd: {
+                attack:
+                    room.rematchState.attack,
+                defense:
+                    room.rematchState.defense
+            }
+        });
+    }
+
+    if (
+        existingAction !== null &&
+        existingAction !== undefined
+    ) {
+        return res.status(409).json({
+            error:
+                "Match end choice already selected",
+            reason:
+                "choice_already_selected"
+        });
+    }
+
+    room.rematchState[participant] =
+        action;
+
+    touchRoomActivity(room);
+
+    const attackChoice =
+        room.rematchState.attack;
+
+    const defenseChoice =
+        room.rematchState.defense;
+
+    if (
+        attackChoice === "rematch" &&
+        defenseChoice === "rematch"
+    ) {
+        resetRoomForRematch(room);
+
+        return res.json({
+            success: true,
+            alreadySelected: false,
+            rematchStarted: true,
+            action,
+            participant,
+            phase: room.phase,
+            round: room.round,
+            roles: room.roles,
+            rematchState:
+                room.rematchState,
+            matchEnd: {
+                attack: null,
+                defense: null
+            }
+        });
+    }
+
     return res.json({
         success: true,
         alreadySelected: false,
         rematchStarted: false,
-        action: action,
-        participant: participant,
+        action,
+        participant,
         phase: room.phase,
         rematchState: room.rematchState,
         matchEnd: {
-            attack: room.rematchState.attack,
-            defense: room.rematchState.defense
+            attack:
+                room.rematchState.attack,
+            defense:
+                room.rematchState.defense
         }
     });
 });
@@ -2464,13 +3479,21 @@ app.post("/api/reward-claim-info/:roomId", requireWixBackend, (req, res) => {
             reason: "player_not_in_room"
         });
     }
-    if (room.type !== "random") {
+    if (
+        room.type !== "random" &&
+        room.type !== "cpu"
+    ) {
         return res.json({
             eligible: false,
-            reason: "not_random_match"
+            reason: "not_reward_match"
         });
     }
-    if (room.participants.attack.memberId && room.participants.attack.memberId === room.participants.defense.memberId) {
+    if (
+        room.type === "random" &&
+        room.participants.attack.memberId &&
+        room.participants.attack.memberId ===
+            room.participants.defense.memberId
+    ) {
         return res.json({
             eligible: false,
             reason: "same_member_id"
